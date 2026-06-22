@@ -34,9 +34,11 @@ retriever = store.as_retriever()
 
 Early, but the core and the differentiators are in place.
 
-**Core `VectorStore` contract**
+**Core `VectorStore` contract** — passes LangChain's standard
+`VectorStoreIntegrationTests` compliance suite.
 
-- `from_texts`, `add_texts`, `delete`
+- `from_texts`, `add_texts` (idempotent upsert on caller-supplied ids), `delete`
+- `get_by_ids`
 - `similarity_search`, `similarity_search_with_score`, `similarity_search_by_vector`
 - `max_marginal_relevance_search`
 - `as_retriever` (inherited)
@@ -49,6 +51,13 @@ Early, but the core and the differentiators are in place.
   (`metadata_columns=`) and filter with the LangChain operator form
   (`filter={"year": {"$gte": 2023}}`, plus `$and` / `$or` / `$not`); the
   rest rides in a JSON catch-all.
+- **Text-pushdown pre-filter** — `filter_query="..."` restricts the kNN to
+  rows matching the full-text terms *before* ranking, so exactly `k` are
+  scored among the survivors — no over-fetch, no under-return. `filter_mode`
+  (`"or"` default / `"and"`) controls multi-term matching; `filter_column`
+  defaults to the text column. Strictly better than post-filtering for text
+  predicates, and reachable from a retriever via
+  `as_retriever(search_kwargs={"filter_query": "..."})`.
 - **Self-query** — `InfinoTranslator` plugs into `SelfQueryRetriever`, lowering
   an LLM's structured query to a SQL `WHERE` over the declared columns.
 - **Semantic LLM cache** — `InfinoSemanticCache` matches prompts by meaning

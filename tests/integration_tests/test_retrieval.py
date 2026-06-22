@@ -1,4 +1,4 @@
-"""Integration tests for phase-2: metadata filtering, hybrid, and MMR."""
+"""Integration tests for metadata filtering, hybrid (RRF) retrieval, and MMR."""
 
 import infino
 import pyarrow as pa
@@ -81,3 +81,49 @@ def test_mmr_with_filter(store: InfinoVectorStore) -> None:
         "learning", k=2, fetch_k=5, filter={"category": "ml"}
     )
     assert all(d.metadata["category"] == "ml" for d in docs)
+
+
+# --- text-pushdown pre-filter (vector kNN restricted to FTS matches) ---
+
+
+def test_pushdown_restricts_to_fts_matches(store: InfinoVectorStore) -> None:
+    # Only the two docs containing "network"/"neural" can come back.
+    docs = store.similarity_search("anything", k=5, filter_query="neural")
+    assert docs
+    assert all("neural" in d.page_content for d in docs)
+
+
+def test_pushdown_and_mode_requires_all_terms(store: InfinoVectorStore) -> None:
+    docs = store.similarity_search(
+        "anything", k=5, filter_query="deep learning", filter_mode="and"
+    )
+    assert docs
+    assert all("deep" in d.page_content and "learning" in d.page_content for d in docs)
+
+
+def test_pushdown_no_match_returns_empty(store: InfinoVectorStore) -> None:
+    assert store.similarity_search("anything", k=5, filter_query="zebra") == []
+
+
+def test_pushdown_via_retriever_search_kwargs(store: InfinoVectorStore) -> None:
+    retriever = store.as_retriever(search_kwargs={"k": 5, "filter_query": "dog"})
+    docs = retriever.invoke("anything")
+    assert docs
+    assert all("dog" in d.page_content for d in docs)
+
+
+def test_pushdown_with_mmr(store: InfinoVectorStore) -> None:
+    docs = store.max_marginal_relevance_search(
+        "anything", k=2, fetch_k=5, filter_query="learning"
+    )
+    assert docs
+    assert all("learning" in d.page_content for d in docs)
+
+
+def test_structured_filter_and_pushdown_together_raises(
+    store: InfinoVectorStore,
+) -> None:
+    with pytest.raises(ValueError, match="not both"):
+        store.similarity_search(
+            "x", k=3, filter={"category": "ml"}, filter_query="neural"
+        )

@@ -1,8 +1,7 @@
 """Retrievers exposing Infino's multi-modal retrieval to LangChain.
 
-The hybrid retriever is the headline capability: BM25 and vector search
-fused by reciprocal-rank fusion in a single SQL call, with no separate
-reranking round-trip.
+The hybrid retriever fuses BM25 and vector search by reciprocal-rank fusion
+in a single SQL call — no separate reranking round-trip.
 """
 
 from __future__ import annotations

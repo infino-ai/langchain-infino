@@ -35,8 +35,8 @@ def test_similarity_search_returns_documents(store: InfinoVectorStore) -> None:
     assert len(docs) == 3
     contents = {d.page_content for d in docs}
     assert TEXTS[0] in contents
-    # Metadata round-trips, including the id folded back in.
-    assert all("doc_id" in d.metadata for d in docs)
+    # The user id lands on Document.id; metadata round-trips on its own.
+    assert all(d.id is not None for d in docs)
     assert any(d.metadata.get("kind") == "physics" for d in docs)
 
 

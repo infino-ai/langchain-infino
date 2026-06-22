@@ -56,7 +56,9 @@ def test_rows_to_documents_merges_metadata_and_id() -> None:
     first = results[0][0]
     assert isinstance(first, Document)
     assert first.page_content == "hello"
-    assert first.metadata == {"src": "a", "doc_id": "x1"}
+    # The user id populates Document.id, not a metadata key.
+    assert first.id == "x1"
+    assert first.metadata == {"src": "a"}
 
 
 def test_rows_to_documents_empty() -> None:

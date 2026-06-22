@@ -1,10 +1,9 @@
 """Self-query translator: lower a LangChain ``StructuredQuery`` to an Infino
 metadata filter.
 
-Plugging this into ``SelfQueryRetriever`` lets an LLM turn a natural-language
-question into both a search string and a structured filter over the declared
-metadata columns — Infino evaluates the filter as a SQL ``WHERE``, so the
-full comparison and boolean surface is available, not a reduced DSL.
+Plugs into ``SelfQueryRetriever``. Infino evaluates the filter as a SQL
+``WHERE``, so the full comparison and boolean surface is available, not a
+reduced DSL.
 """
 
 from __future__ import annotations

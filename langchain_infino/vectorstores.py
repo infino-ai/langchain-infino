@@ -1,10 +1,9 @@
 """The :class:`InfinoVectorStore` LangChain vector store.
 
-Phase 1: the core ``VectorStore`` contract over a single Infino table —
-``add_texts``, ``from_texts``, vector similarity search (plain, scored, and
-by-vector), and ``delete``. Metadata is round-tripped through a JSON
-catch-all column; declared filterable metadata columns, hybrid (RRF)
-retrieval, MMR, and the self-query translator are later phases.
+Maps the ``VectorStore`` contract onto one Infino table: text and embedding
+in dedicated columns, the doc id in an FTS-indexed column, metadata either
+promoted to scalar columns (filterable) or kept in a JSON catch-all. Vector,
+filtered, MMR, and hybrid (RRF) retrieval all run over that one table.
 """
 
 from __future__ import annotations
@@ -33,10 +32,8 @@ from langchain_infino._arrow import (
 if TYPE_CHECKING:
     from langchain_infino.retrievers import InfinoHybridRetriever
 
-# Defaults chosen to match the engine's behavior and the LangChain idiom.
 DEFAULT_K = 4
-# The IVF builder clamps n_cent to <=64 below 100K rows, so 64 is the
-# largest value that takes effect at small/medium scale without surprise.
+# IVF builder clamps n_cent to <=64 below 100K rows; 64 is the effective max.
 DEFAULT_N_CENT = 64
 DEFAULT_METRIC = "cosine"
 DEFAULT_TEXT_COLUMN = "page_content"
@@ -44,10 +41,8 @@ DEFAULT_VECTOR_COLUMN = "embedding"
 DEFAULT_ID_COLUMN = "doc_id"
 DEFAULT_FETCH_K = 20
 DEFAULT_LAMBDA_MULT = 0.5
-# A structured filter is applied as a WHERE over the vector-search TVF, which
-# ranks before filtering — so over-fetch candidates to refill the top-k after
-# the predicate prunes. Approximate; a very selective filter may still
-# under-return.
+# Structured filter is a WHERE applied after the TVF ranks, so over-fetch to
+# refill the top-k. A very selective filter may still under-return.
 FILTER_OVERSAMPLE = 10
 
 # LangChain's structured-filter operators → SQL comparison operators.
@@ -63,8 +58,7 @@ _FILTER_OPERATORS = {
 # Logical operators that join sub-filters; "$not" is handled separately.
 _LOGICAL_OPERATORS = {"$and": " AND ", "$or": " OR "}
 
-# Per-metric maps from Infino's raw distance/score to a [0, 1] relevance
-# where higher is more relevant, for similarity_search_with_relevance_scores.
+# Map Infino's raw distance to a [0, 1] relevance, higher = more relevant.
 _RELEVANCE_FNS: dict[str, Callable[[float], float]] = {
     # Cosine distance is 1 - cosine_similarity, already in [0, 2]; clamp.
     "cosine": lambda d: max(0.0, min(1.0, 1.0 - d)),
@@ -77,11 +71,11 @@ _RELEVANCE_FNS: dict[str, Callable[[float], float]] = {
 class InfinoVectorStore(VectorStore):
     """LangChain ``VectorStore`` backed by a single Infino table.
 
-    The table is created with three columns — the document id, the text, and
-    the embedding — plus a JSON catch-all that round-trips arbitrary
-    metadata. The id and text columns are FTS-indexed: the id so ``delete``
-    can prune by ``exact_match``, the text so later phases can add BM25 and
-    hybrid retrieval over the same data.
+    The table holds the document id, the text, and the embedding, plus any
+    promoted metadata columns and a JSON catch-all for the rest. The id and
+    text columns are FTS-indexed: the id so ``get_by_ids`` resolves via
+    ``exact_match`` (the engine's only pre-I/O prune for random ids), the text
+    so BM25 and hybrid retrieval run over the same data.
 
     Args:
         connection: a live :class:`infino.Connection`.
@@ -90,9 +84,10 @@ class InfinoVectorStore(VectorStore):
         embedding: the LangChain embeddings to use for query and documents.
         dim: embedding dimension; must match the table's vector column and
             lie in the engine's supported range [16, 4096].
-        metric: distance metric — ``"cosine"`` (default), ``"l2sq"`` /
-            ``"l2"``, or ``"negdot"`` / ``"dot"``.
-        n_cent: IVF centroid count; size to the table's scale.
+        metric: distance metric to index with — ``"cosine"`` (default),
+            ``"l2sq"`` / ``"l2"``, ``"negdot"`` / ``"dot"``. Relevance
+            normalization is defined for cosine/l2/l2sq; others serve raw
+            distances only.
         text_column / vector_column / id_column: column names.
         metadata_columns: metadata keys to promote to real scalar columns so
             they can be filtered with the ``filter`` argument; any remaining
@@ -108,7 +103,6 @@ class InfinoVectorStore(VectorStore):
         *,
         dim: int,
         metric: str = DEFAULT_METRIC,
-        n_cent: int = DEFAULT_N_CENT,
         text_column: str = DEFAULT_TEXT_COLUMN,
         vector_column: str = DEFAULT_VECTOR_COLUMN,
         id_column: str = DEFAULT_ID_COLUMN,
@@ -120,16 +114,13 @@ class InfinoVectorStore(VectorStore):
         self._embedding = embedding
         self._dim = dim
         self._metric = metric
-        self._n_cent = n_cent
         self._text_column = text_column
         self._vector_column = vector_column
         self._id_column = id_column
         self._metadata_columns = list(metadata_columns)
         self._metadata_column_names = [f.name for f in self._metadata_columns]
-        # A table's manifest is written on its first commit, so open_table
-        # only succeeds once it holds data. from_texts hands in the handle
-        # returned by create_table; opening by name serves already-populated
-        # tables.
+        # open_table only succeeds once a table holds data (its manifest lands
+        # on first commit); from_texts passes the create_table handle directly.
         self._table = table if table is not None else connection.open_table(table_name)
 
     @property
@@ -144,14 +135,26 @@ class InfinoVectorStore(VectorStore):
         ids: list[str] | None = None,
         **kwargs: Any,
     ) -> list[str]:
+        """Embed and add ``texts``, returning their ids.
+
+        Caller-supplied ids are upserted (re-adding overwrites); omitted or
+        gap ids are generated.
+        """
         texts = list(texts)
         if not texts:
             return []
 
+        # Superfiles are immutable, so upsert = delete-then-append. Generated
+        # uuids can't collide, so the delete is skipped on the bulk-load path.
+        ids_provided = ids is not None
         if ids is None:
             ids = [uuid4().hex for _ in texts]
         elif len(ids) != len(texts):
             raise ValueError("ids and texts must have the same length")
+        else:
+            ids = [i if i is not None else uuid4().hex for i in ids]
+        if ids_provided:
+            self.delete(ids)
 
         if metadatas is None:
             metadatas = [{} for _ in texts]
@@ -161,8 +164,7 @@ class InfinoVectorStore(VectorStore):
         vectors = self._embedding.embed_documents(texts)
         declared = set(self._metadata_column_names)
 
-        # Column order must match the declared schema: id, text, vector,
-        # *metadata_columns, _metadata_json.
+        # Order must match the schema: id, text, vector, *metadata, json.
         arrays: list[pa.Array] = [
             pa.array(ids, type=pa.large_utf8()),
             pa.array(texts, type=pa.large_utf8()),
@@ -192,32 +194,65 @@ class InfinoVectorStore(VectorStore):
         query: str,
         k: int = DEFAULT_K,
         filter: Mapping[str, Any] | None = None,
+        *,
+        filter_query: str | None = None,
+        filter_column: str | None = None,
+        filter_mode: str | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         embedding = self._embedding.embed_query(query)
-        return self.similarity_search_by_vector(embedding, k, filter=filter, **kwargs)
+        return self.similarity_search_by_vector(
+            embedding,
+            k,
+            filter=filter,
+            filter_query=filter_query,
+            filter_column=filter_column,
+            filter_mode=filter_mode,
+            **kwargs,
+        )
 
     def similarity_search_by_vector(
         self,
         embedding: Sequence[float],
         k: int = DEFAULT_K,
         filter: Mapping[str, Any] | None = None,
+        *,
+        filter_query: str | None = None,
+        filter_column: str | None = None,
+        filter_mode: str | None = None,
         **kwargs: Any,
     ) -> list[Document]:
-        return [doc for doc, _ in self._search(list(embedding), k, filter)]
+        results = self._search(
+            list(embedding),
+            k,
+            filter,
+            filter_query=filter_query,
+            filter_column=filter_column,
+            filter_mode=filter_mode,
+        )
+        return [doc for doc, _ in results]
 
     def similarity_search_with_score(
         self,
         query: str,
         k: int = DEFAULT_K,
         filter: Mapping[str, Any] | None = None,
+        *,
+        filter_query: str | None = None,
+        filter_column: str | None = None,
+        filter_mode: str | None = None,
         **kwargs: Any,
     ) -> list[tuple[Document, float]]:
         embedding = self._embedding.embed_query(query)
-        return [
-            (doc, score if score is not None else 0.0)
-            for doc, score in self._search(embedding, k, filter)
-        ]
+        results = self._search(
+            embedding,
+            k,
+            filter,
+            filter_query=filter_query,
+            filter_column=filter_column,
+            filter_mode=filter_mode,
+        )
+        return [(doc, score if score is not None else 0.0) for doc, score in results]
 
     def max_marginal_relevance_search(
         self,
@@ -226,12 +261,23 @@ class InfinoVectorStore(VectorStore):
         fetch_k: int = DEFAULT_FETCH_K,
         lambda_mult: float = DEFAULT_LAMBDA_MULT,
         filter: Mapping[str, Any] | None = None,
+        *,
+        filter_query: str | None = None,
+        filter_column: str | None = None,
+        filter_mode: str | None = None,
         **kwargs: Any,
     ) -> list[Document]:
-        # The vector column is not projectable and there is no point-lookup,
-        # so re-embed the candidates' text to score them against each other.
+        # Stored vectors can't be read back (not projectable, no point-lookup),
+        # so re-embed the candidate text for MMR's pairwise scoring.
         query_embedding = self._embedding.embed_query(query)
-        candidates = self._search(query_embedding, fetch_k, filter)
+        candidates = self._search(
+            query_embedding,
+            fetch_k,
+            filter,
+            filter_query=filter_query,
+            filter_column=filter_column,
+            filter_mode=filter_mode,
+        )
         if not candidates:
             return []
         candidate_embeddings = self._embedding.embed_documents(
@@ -251,6 +297,31 @@ class InfinoVectorStore(VectorStore):
         id_list = ", ".join(sql_lit(i) for i in ids)
         self._table.delete(f"{self._id_column} IN ({id_list})")
         return True
+
+    def get_by_ids(self, ids: Sequence[str], /) -> list[Document]:
+        """Fetch documents by ``doc_id`` via ``exact_match`` (the only pre-I/O
+        prune for random ids on a scan-based engine).
+
+        Missing ids are skipped and duplicates collapse; order is not
+        guaranteed, per the ``VectorStore`` contract.
+        """
+        projection = [
+            self._id_column,
+            self._text_column,
+            *self._metadata_column_names,
+            METADATA_JSON_COLUMN,
+        ]
+        found: dict[str, Document] = {}
+        for id_ in ids:
+            result = self._table.exact_match(
+                self._id_column, id_, projection=projection
+            )
+            for doc, _ in rows_to_documents(
+                result, id_column=self._id_column, text_column=self._text_column
+            ):
+                if doc.id is not None:
+                    found[doc.id] = doc
+        return list(found.values())
 
     def _select_relevance_score_fn(self) -> Callable[[float], float]:
         try:
@@ -275,7 +346,18 @@ class InfinoVectorStore(VectorStore):
         embedding: Sequence[float],
         k: int,
         filter: Mapping[str, Any] | None = None,
+        *,
+        filter_query: str | None = None,
+        filter_column: str | None = None,
+        filter_mode: str | None = None,
     ) -> list[tuple[Document, float | None]]:
+        # Not composable in one engine call: `filter` is a post-rank SQL WHERE,
+        # `filter_query` an FTS pre-filter the kNN honors before ranking.
+        if filter and filter_query:
+            raise ValueError(
+                "pass either `filter` (structured SQL predicate, post-rank) or "
+                "`filter_query` (text pushdown pre-filter), not both"
+            )
         projection = self._projection()
         if filter:
             where = _compile_filter(filter, self._metadata_column_names)
@@ -288,6 +370,18 @@ class InfinoVectorStore(VectorStore):
                 f"WHERE {where} ORDER BY {SCORE_COLUMN} ASC LIMIT {k}"
             )
             result = self._connection.query_sql(sql)
+        elif filter_query is not None:
+            # Pushdown: engine prunes to FTS matches before ranking, so exactly
+            # k are scored among survivors. Defaults to the indexed text column.
+            result = self._table.vector_search(
+                self._vector_column,
+                list(embedding),
+                k,
+                filter_column=filter_column or self._text_column,
+                filter_query=filter_query,
+                filter_mode=filter_mode,
+                projection=projection,
+            )
         else:
             result = self._table.vector_search(
                 self._vector_column, list(embedding), k, projection=projection
@@ -299,8 +393,11 @@ class InfinoVectorStore(VectorStore):
     def _hybrid_search(self, query: str, k: int = DEFAULT_K) -> list[Document]:
         """BM25 + vector retrieval fused by RRF in a single SQL call."""
         query_vector = _vector_literal(self._embedding.embed_query(query))
+        # Project explicitly (SELECT * would leak engine-internal columns into
+        # metadata). RRF score is larger-is-better, hence DESC.
+        columns = ", ".join(self._projection())
         sql = (
-            f"SELECT * FROM hybrid_search("
+            f"SELECT {columns} FROM hybrid_search("
             f"{sql_lit(self._table_name)}, {sql_lit(self._text_column)}, "
             f"{sql_lit(query)}, {sql_lit(self._vector_column)}, "
             f"{sql_lit(query_vector)}, {k}) ORDER BY {SCORE_COLUMN} DESC"
@@ -356,7 +453,6 @@ class InfinoVectorStore(VectorStore):
             embedding,
             dim=dim,
             metric=metric,
-            n_cent=n_cent,
             text_column=text_column,
             vector_column=vector_column,
             id_column=id_column,
@@ -392,14 +488,11 @@ def _vector_literal(embedding: Sequence[float]) -> str:
 
 
 def _compile_filter(filter: Mapping[str, Any], allowed: Sequence[str]) -> str:
-    """Compile a structured metadata filter into a SQL ``WHERE`` clause.
+    """Compile a structured metadata filter to a SQL ``WHERE`` clause.
 
-    Supports plain equality (``{"k": v}``), the operator form
-    (``{"k": {"$gt": 3}}``, ``$in`` / ``$nin``), and the logical operators
-    ``$and`` / ``$or`` / ``$not`` nesting sub-filters — the surface the
-    self-query translator emits. Filtering on a column that was not promoted
-    out of the JSON catch-all is rejected: the engine cannot index into
-    serialized JSON.
+    Supports equality, the operator form (``$gt`` / ``$in`` / ...), and
+    ``$and`` / ``$or`` / ``$not``. A non-declared column is rejected — the
+    engine can't index into the serialized JSON catch-all.
     """
     return _compile_node(filter, set(allowed))
 

@@ -1,9 +1,8 @@
 """A semantic LLM cache backed by Infino vector search.
 
-Caches model responses keyed by the *meaning* of the prompt: a lookup
-embeds the incoming prompt and returns a cached response when a stored
-prompt for the same model lands within a distance threshold. One small
-Infino table, no extra infrastructure.
+Keys responses by prompt *meaning*: a lookup embeds the prompt and returns a
+hit when a stored prompt for the same model lands within a distance
+threshold. One small Infino table, no extra infrastructure.
 """
 
 from __future__ import annotations
@@ -29,6 +28,9 @@ _LLM_STRING_COLUMN = "llm_string"
 
 class InfinoSemanticCache(BaseCache):
     """LangChain ``BaseCache`` doing semantic prompt matching over Infino.
+
+    Grows unbounded — every ``update`` appends, nothing evicts; call
+    :meth:`clear` to reset.
 
     Args:
         connection: a live :class:`infino.Connection`.
@@ -68,16 +70,16 @@ class InfinoSemanticCache(BaseCache):
         )
 
     def lookup(self, prompt: str, llm_string: str) -> RETURN_VAL_TYPE | None:
-        # k-NN by prompt meaning, then match the model signature in Python —
-        # avoids a SQL filter path and works on an empty cache.
+        # k-NN by meaning, then match the model signature in Python — works on
+        # an empty cache and avoids a SQL filter path.
         for doc, distance in self._store.similarity_search_with_score(
             prompt, k=CACHE_LOOKUP_K
         ):
             if distance > self._threshold:
                 break
             if doc.metadata.get(_LLM_STRING_COLUMN) == llm_string:
-                # The cache only ever stores langchain_core Generations that
-                # it serialized itself, so "core" is the safe allow-list.
+                # Only core Generations are ever stored here, so "core" is the
+                # safe deserialization allow-list.
                 cached = loads(doc.metadata[_RETURN_KEY], allowed_objects="core")
                 return cast(RETURN_VAL_TYPE, cached)
         return None

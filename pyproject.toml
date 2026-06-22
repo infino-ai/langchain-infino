@@ -23,9 +23,14 @@ Homepage = "https://github.com/infino-ai/langchain-infino"
 Repository = "https://github.com/infino-ai/langchain-infino"
 
 [project.optional-dependencies]
-# langchain-tests carries the standard VectorStore compliance suites.
-test = ["pytest", "langchain-tests"]
+# langchain-tests carries the standard VectorStore compliance suites; the
+# suite's async cases need an asyncio plugin to run.
+test = ["pytest", "pytest-asyncio", "langchain-tests"]
 lint = ["ruff", "mypy"]
+
+[tool.pytest.ini_options]
+# The compliance suite ships async test cases; run them without per-test marks.
+asyncio_mode = "auto"
 
 [tool.hatch.build.targets.wheel]
 packages = ["langchain_infino"]

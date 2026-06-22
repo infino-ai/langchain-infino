@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"  # weekly: catch upstream langchain-core / infino drift
+
+jobs:
+  # Lint, type-check, and the engine-free unit suite. Runs on every push/PR.
+  lint-unit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[test,lint]"
+      - run: ruff check .
+      - run: mypy langchain_infino
+      - run: pytest tests/unit_tests -q
+
+  # The full suite (compliance + integration) needs the infino engine and an
+  # embedding model, so it runs on demand and on the weekly schedule rather
+  # than gating every PR.
+  integration:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[test,lint]"
+      - run: pytest tests/integration_tests -q

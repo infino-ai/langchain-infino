@@ -1,9 +1,7 @@
 """Helpers bridging Infino's Arrow results and LangChain documents.
 
-Kept in one module because the projection column names and the SQL
-literal-quoting rules are schema assumptions that must stay in a single
-place — they are the contract between :class:`InfinoVectorStore` and the
-engine.
+One module so the projection column names and SQL-quoting rules — the schema
+contract between the store and the engine — live in one place.
 """
 
 from __future__ import annotations
@@ -15,8 +13,7 @@ from typing import Any
 import pyarrow as pa
 from langchain_core.documents import Document
 
-# Catch-all column holding the JSON-serialized remainder of a document's
-# metadata (everything not promoted to a declared scalar column).
+# Column holding metadata not promoted to a declared scalar column, as JSON.
 METADATA_JSON_COLUMN = "_metadata_json"
 
 # Trailing relevance column every search TVF appends.
@@ -26,9 +23,8 @@ SCORE_COLUMN = "score"
 def sql_lit(value: str) -> str:
     """Quote a string as a SQL literal, escaping embedded single quotes.
 
-    Infino predicates are built as SQL text (e.g. ``doc_id IN (...)``), so
-    any caller-supplied id or term must be escaped to avoid breaking the
-    statement. Numeric literals (vectors) never pass through here.
+    Infino predicates are built as SQL text, so caller-supplied ids/terms must
+    be escaped. Numeric literals (vectors) never pass through here.
     """
     return "'" + value.replace("'", "''") + "'"
 
@@ -51,9 +47,9 @@ def rows_to_documents(
 ) -> list[tuple[Document, float | None]]:
     """Convert a search result table into ``(Document, score)`` pairs.
 
-    ``score`` is ``None`` when the projection did not include it. The id is
-    folded back into ``Document.metadata`` under ``id_column`` so callers can
-    recover it; the JSON catch-all is merged in underneath.
+    ``score`` is ``None`` when not projected. The id column populates
+    ``Document.id`` (not a metadata key); declared metadata columns and the
+    JSON catch-all merge into ``Document.metadata``.
     """
     n = table.num_rows
     if n == 0:
@@ -65,9 +61,8 @@ def rows_to_documents(
     metadata_json = columns.get(METADATA_JSON_COLUMN, [None] * n)
     scores = columns.get(SCORE_COLUMN, [None] * n)
 
-    # Columns that carry their own meaning; everything else is a declared
-    # metadata column to fold back into Document.metadata. "_id" is the
-    # engine's internal id (distinct from the user id_column) — skip it.
+    # Non-reserved columns are declared metadata to fold into Document.metadata.
+    # "_id" is the engine's internal id (distinct from the user id_column).
     reserved = {id_column, text_column, METADATA_JSON_COLUMN, SCORE_COLUMN, "_id"}
     extra_columns = [name for name in columns if name not in reserved]
 
@@ -77,7 +72,6 @@ def rows_to_documents(
         metadata: dict[str, Any] = json.loads(raw) if raw else {}
         for name in extra_columns:
             metadata[name] = columns[name][i]
-        metadata[id_column] = ids[i]
-        doc = Document(page_content=texts[i] or "", metadata=metadata)
+        doc = Document(id=ids[i], page_content=texts[i] or "", metadata=metadata)
         results.append((doc, scores[i]))
     return results
