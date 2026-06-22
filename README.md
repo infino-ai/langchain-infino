@@ -47,7 +47,12 @@ Early, but the core and the differentiators are in place.
   vector search in a single SQL call, no separate reranking step.
 - **Metadata filtering** — promote metadata keys to real columns
   (`metadata_columns=`) and filter with the LangChain operator form
-  (`filter={"year": {"$gte": 2023}}`); the rest rides in a JSON catch-all.
+  (`filter={"year": {"$gte": 2023}}`, plus `$and` / `$or` / `$not`); the
+  rest rides in a JSON catch-all.
+- **Self-query** — `InfinoTranslator` plugs into `SelfQueryRetriever`, lowering
+  an LLM's structured query to a SQL `WHERE` over the declared columns.
+- **Semantic LLM cache** — `InfinoSemanticCache` matches prompts by meaning
+  via vector search; a near-enough stored prompt returns the cached response.
 
 Filtering on a hybrid query.
 
@@ -62,8 +67,6 @@ store = InfinoVectorStore.from_texts(
 )
 docs = store.similarity_search("optimizers", k=4, filter={"category": "ml"})
 ```
-
-Planned next: a self-query translator and a semantic LLM cache.
 
 ## Development
 

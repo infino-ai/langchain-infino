@@ -60,6 +60,9 @@ _FILTER_OPERATORS = {
     "$lte": "<=",
 }
 
+# Logical operators that join sub-filters; "$not" is handled separately.
+_LOGICAL_OPERATORS = {"$and": " AND ", "$or": " OR "}
+
 # Per-metric maps from Infino's raw distance/score to a [0, 1] relevance
 # where higher is more relevant, for similarity_search_with_relevance_scores.
 _RELEVANCE_FNS: dict[str, Callable[[float], float]] = {
@@ -391,32 +394,50 @@ def _vector_literal(embedding: Sequence[float]) -> str:
 def _compile_filter(filter: Mapping[str, Any], allowed: Sequence[str]) -> str:
     """Compile a structured metadata filter into a SQL ``WHERE`` clause.
 
-    Supports plain equality (``{"k": v}``) and the operator form
-    (``{"k": {"$gt": 3}}``) over declared metadata columns. Filtering on a
-    column that was not promoted out of the JSON catch-all is rejected — the
-    engine cannot index into serialized JSON.
+    Supports plain equality (``{"k": v}``), the operator form
+    (``{"k": {"$gt": 3}}``, ``$in`` / ``$nin``), and the logical operators
+    ``$and`` / ``$or`` / ``$not`` nesting sub-filters — the surface the
+    self-query translator emits. Filtering on a column that was not promoted
+    out of the JSON catch-all is rejected: the engine cannot index into
+    serialized JSON.
     """
-    allowed_set = set(allowed)
+    return _compile_node(filter, set(allowed))
+
+
+def _compile_node(node: Mapping[str, Any], allowed: set[str]) -> str:
     clauses: list[str] = []
-    for key, condition in filter.items():
-        if key not in allowed_set:
-            raise ValueError(
-                f"cannot filter on {key!r}: not a declared metadata column "
-                f"(declared: {sorted(allowed_set)})"
-            )
-        if isinstance(condition, Mapping):
-            for op, value in condition.items():
-                if op == "$in":
-                    items = ", ".join(_filter_literal(v) for v in value)
-                    clauses.append(f"{key} IN ({items})")
-                elif op in _FILTER_OPERATORS:
-                    sql_op = _FILTER_OPERATORS[op]
-                    clauses.append(f"{key} {sql_op} {_filter_literal(value)}")
-                else:
-                    raise ValueError(f"unsupported filter operator {op!r}")
+    for key, condition in node.items():
+        if key in _LOGICAL_OPERATORS:
+            joiner = _LOGICAL_OPERATORS[key]
+            sub = [f"({_compile_node(f, allowed)})" for f in condition]
+            clauses.append("(" + joiner.join(sub) + ")")
+        elif key == "$not":
+            inner = condition[0] if isinstance(condition, (list, tuple)) else condition
+            clauses.append(f"NOT ({_compile_node(inner, allowed)})")
         else:
-            clauses.append(f"{key} = {_filter_literal(condition)}")
+            if key not in allowed:
+                raise ValueError(
+                    f"cannot filter on {key!r}: not a declared metadata column "
+                    f"(declared: {sorted(allowed)})"
+                )
+            clauses.append(_compile_comparison(key, condition))
     return " AND ".join(clauses)
+
+
+def _compile_comparison(key: str, condition: Any) -> str:
+    if not isinstance(condition, Mapping):
+        return f"{key} = {_filter_literal(condition)}"
+    parts: list[str] = []
+    for op, value in condition.items():
+        if op in ("$in", "$nin"):
+            items = ", ".join(_filter_literal(v) for v in value)
+            sql_op = "IN" if op == "$in" else "NOT IN"
+            parts.append(f"{key} {sql_op} ({items})")
+        elif op in _FILTER_OPERATORS:
+            parts.append(f"{key} {_FILTER_OPERATORS[op]} {_filter_literal(value)}")
+        else:
+            raise ValueError(f"unsupported filter operator {op!r}")
+    return " AND ".join(parts)
 
 
 def _filter_literal(value: Any) -> str:

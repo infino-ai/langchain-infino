@@ -1,0 +1,85 @@
+"""Unit tests for the self-query translator and the logical-operator
+extensions to the filter compiler."""
+
+from langchain_core.structured_query import (
+    Comparator,
+    Comparison,
+    Operation,
+    Operator,
+    StructuredQuery,
+)
+
+from langchain_infino.translators import InfinoTranslator
+from langchain_infino.vectorstores import _compile_filter
+
+ALLOWED = ["category", "year"]
+
+
+def test_visit_comparison() -> None:
+    t = InfinoTranslator()
+    out = t.visit_comparison(
+        Comparison(comparator=Comparator.GTE, attribute="year", value=2020)
+    )
+    assert out == {"year": {"$gte": 2020}}
+
+
+def test_visit_operation_and() -> None:
+    t = InfinoTranslator()
+    op = Operation(
+        operator=Operator.AND,
+        arguments=[
+            Comparison(comparator=Comparator.EQ, attribute="category", value="ml"),
+            Comparison(comparator=Comparator.GTE, attribute="year", value=2020),
+        ],
+    )
+    assert t.visit_operation(op) == {
+        "$and": [{"category": {"$eq": "ml"}}, {"year": {"$gte": 2020}}]
+    }
+
+
+def test_visit_structured_query() -> None:
+    t = InfinoTranslator()
+    sq = StructuredQuery(
+        query="neural nets",
+        filter=Comparison(comparator=Comparator.EQ, attribute="category", value="ml"),
+        limit=None,
+    )
+    query, kwargs = t.visit_structured_query(sq)
+    assert query == "neural nets"
+    assert kwargs == {"filter": {"category": {"$eq": "ml"}}}
+
+
+def test_structured_query_without_filter() -> None:
+    t = InfinoTranslator()
+    query, kwargs = t.visit_structured_query(
+        StructuredQuery(query="anything", filter=None, limit=None)
+    )
+    assert query == "anything"
+    assert kwargs == {}
+
+
+# The translator's output must compile to valid SQL.
+
+
+def test_compile_and() -> None:
+    where = _compile_filter(
+        {"$and": [{"category": "ml"}, {"year": {"$gte": 2020}}]}, ALLOWED
+    )
+    assert where == "((category = 'ml') AND (year >= 2020))"
+
+
+def test_compile_or() -> None:
+    where = _compile_filter(
+        {"$or": [{"category": "ml"}, {"category": "physics"}]}, ALLOWED
+    )
+    assert where == "((category = 'ml') OR (category = 'physics'))"
+
+
+def test_compile_not() -> None:
+    where = _compile_filter({"$not": [{"category": "ml"}]}, ALLOWED)
+    assert where == "NOT (category = 'ml')"
+
+
+def test_compile_nin() -> None:
+    where = _compile_filter({"category": {"$nin": ["ml", "physics"]}}, ALLOWED)
+    assert where == "category NOT IN ('ml', 'physics')"
