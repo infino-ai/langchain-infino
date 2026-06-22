@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "langchain-infino"
+version = "0.1.0"
+description = "LangChain integration for Infino — vector, BM25, and hybrid retrieval over one engine on object storage."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "The Infino Authors" }]
+keywords = ["langchain", "infino", "vectorstore", "retrieval", "rag", "hybrid-search", "bm25", "vector-search"]
+dependencies = [
+    "langchain-core>=0.3",
+    "infino>=0.1",
+    "pyarrow>=14",
+]
+
+[project.urls]
+Homepage = "https://github.com/infino-ai/langchain-infino"
+Repository = "https://github.com/infino-ai/langchain-infino"
+
+[project.optional-dependencies]
+# langchain-tests carries the standard VectorStore compliance suites.
+test = ["pytest", "langchain-tests"]
+lint = ["ruff", "mypy"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["langchain_infino"]
+
+[tool.mypy]
+strict = true
+
+# pyarrow ships no type information; treat it as untyped rather than
+# failing the strict run on a third-party gap.
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*", "infino", "infino.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
