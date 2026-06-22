@@ -36,6 +36,11 @@ def test_quotes_are_escaped() -> None:
     assert _compile_filter({"category": "a'b"}, ALLOWED) == "category = 'a''b'"
 
 
+def test_boolean_value_is_a_sql_keyword() -> None:
+    assert _compile_filter({"year": True}, ALLOWED) == "year = true"
+    assert _compile_filter({"year": False}, ALLOWED) == "year = false"
+
+
 def test_undeclared_column_rejected() -> None:
     with pytest.raises(ValueError, match="not a declared metadata column"):
         _compile_filter({"unknown": 1}, ALLOWED)

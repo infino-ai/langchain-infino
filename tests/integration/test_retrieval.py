@@ -162,3 +162,42 @@ def test_search_by_sql_maps_rows_to_documents(store: InfinoVectorStore) -> None:
     assert docs
     assert all(d.metadata["category"] == "ml" for d in docs)
     assert all(d.id is not None for d in docs)
+
+
+def test_search_by_sql_via_vector_tvf(store: InfinoVectorStore) -> None:
+    vector = DeterministicFakeEmbedding(size=EMBED_DIM).embed_query("learning")
+    qv = ",".join(str(float(x)) for x in vector)
+    docs = store.search_by_sql(
+        "SELECT doc_id, page_content, category, year, _metadata_json, score "
+        f"FROM vector_search('docs', 'embedding', '{qv}', 3) ORDER BY score ASC"
+    )
+    assert len(docs) == 3
+    assert all(d.id is not None for d in docs)
+
+
+# --- additional filter operators end-to-end ---
+
+
+def test_in_operator_filter(store: InfinoVectorStore) -> None:
+    docs = store.similarity_search(
+        "anything", k=5, filter={"category": {"$in": ["ml", "physics"]}}
+    )
+    assert docs
+    assert all(d.metadata["category"] in {"ml", "physics"} for d in docs)
+
+
+def test_not_operator_filter(store: InfinoVectorStore) -> None:
+    docs = store.similarity_search(
+        "anything", k=5, filter={"$not": [{"category": "ml"}]}
+    )
+    assert docs
+    assert all(d.metadata["category"] != "ml" for d in docs)
+
+
+def test_mmr_empty_when_no_fts_match(store: InfinoVectorStore) -> None:
+    assert (
+        store.max_marginal_relevance_search(
+            "anything", k=2, fetch_k=5, filter_query="zebra"
+        )
+        == []
+    )

@@ -85,3 +85,45 @@ def test_relevance_scores_are_in_unit_interval(store: InfinoVectorStore) -> None
     results = store.similarity_search_with_relevance_scores(TEXTS[0], k=3)
     assert results
     assert all(0.0 <= score <= 1.0 for _, score in results)
+
+
+def test_open_existing_table_by_constructor(tmp_path) -> None:
+    connection = infino.connect(str(tmp_path / "db"))
+    embedding = DeterministicFakeEmbedding(size=EMBED_DIM)
+    InfinoVectorStore.from_texts(
+        TEXTS, embedding, connection=connection, table_name="docs", dim=EMBED_DIM
+    )
+    # A second handle opens the already-populated table by name.
+    reopened = InfinoVectorStore(
+        connection, "docs", embedding, dim=EMBED_DIM
+    )
+    assert len(reopened.similarity_search(TEXTS[0], k=3)) == 3
+
+
+def test_l2sq_metric_search(tmp_path) -> None:
+    connection = infino.connect(str(tmp_path / "db"))
+    store = InfinoVectorStore.from_texts(
+        TEXTS,
+        DeterministicFakeEmbedding(size=EMBED_DIM),
+        connection=connection,
+        table_name="docs",
+        dim=EMBED_DIM,
+        metric="l2sq",
+    )
+    assert len(store.similarity_search(TEXTS[0], k=3)) == 3
+    results = store.similarity_search_with_relevance_scores(TEXTS[0], k=3)
+    assert all(0.0 <= score <= 1.0 for _, score in results)
+
+
+def test_relevance_scores_unsupported_metric_raises(tmp_path) -> None:
+    connection = infino.connect(str(tmp_path / "db"))
+    store = InfinoVectorStore.from_texts(
+        TEXTS,
+        DeterministicFakeEmbedding(size=EMBED_DIM),
+        connection=connection,
+        table_name="docs",
+        dim=EMBED_DIM,
+        metric="negdot",
+    )
+    with pytest.raises(ValueError, match="no relevance-score normalization"):
+        store.similarity_search_with_relevance_scores(TEXTS[0], k=3)
