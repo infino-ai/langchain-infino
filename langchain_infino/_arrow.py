@@ -65,10 +65,18 @@ def rows_to_documents(
     metadata_json = columns.get(METADATA_JSON_COLUMN, [None] * n)
     scores = columns.get(SCORE_COLUMN, [None] * n)
 
+    # Columns that carry their own meaning; everything else is a declared
+    # metadata column to fold back into Document.metadata. "_id" is the
+    # engine's internal id (distinct from the user id_column) — skip it.
+    reserved = {id_column, text_column, METADATA_JSON_COLUMN, SCORE_COLUMN, "_id"}
+    extra_columns = [name for name in columns if name not in reserved]
+
     results: list[tuple[Document, float | None]] = []
     for i in range(n):
         raw = metadata_json[i]
         metadata: dict[str, Any] = json.loads(raw) if raw else {}
+        for name in extra_columns:
+            metadata[name] = columns[name][i]
         metadata[id_column] = ids[i]
         doc = Document(page_content=texts[i] or "", metadata=metadata)
         results.append((doc, scores[i]))

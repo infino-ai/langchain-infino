@@ -15,6 +15,7 @@ dependencies = [
     "langchain-core>=0.3",
     "infino>=0.1",
     "pyarrow>=14",
+    "numpy>=1.26",
 ]
 
 [project.urls]

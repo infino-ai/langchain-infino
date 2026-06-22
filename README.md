@@ -32,15 +32,38 @@ retriever = store.as_retriever()
 
 ## Status
 
-Early. Phase 1 implements the core `VectorStore` contract:
+Early, but the core and the differentiators are in place.
+
+**Core `VectorStore` contract**
 
 - `from_texts`, `add_texts`, `delete`
 - `similarity_search`, `similarity_search_with_score`, `similarity_search_by_vector`
+- `max_marginal_relevance_search`
 - `as_retriever` (inherited)
 
-Metadata is round-tripped through a JSON catch-all column. Planned next:
-declared filterable metadata columns, a hybrid (RRF) retriever in a single
-SQL call, MMR, and a self-query translator.
+**Infino-native extras**
+
+- **Hybrid (RRF) retrieval** — `store.as_hybrid_retriever()` fuses BM25 and
+  vector search in a single SQL call, no separate reranking step.
+- **Metadata filtering** — promote metadata keys to real columns
+  (`metadata_columns=`) and filter with the LangChain operator form
+  (`filter={"year": {"$gte": 2023}}`); the rest rides in a JSON catch-all.
+
+Filtering on a hybrid query.
+
+```python
+import pyarrow as pa
+
+store = InfinoVectorStore.from_texts(
+    texts, embedding,
+    connection=connection, table_name="docs", dim=1536,
+    metadata_columns=[pa.field("category", pa.large_utf8(), nullable=False)],
+    metadatas=[{"category": "ml"} for _ in texts],
+)
+docs = store.similarity_search("optimizers", k=4, filter={"category": "ml"})
+```
+
+Planned next: a self-query translator and a semantic LLM cache.
 
 ## Development
 
