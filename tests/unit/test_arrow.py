@@ -61,6 +61,37 @@ def test_rows_to_documents_merges_metadata_and_id() -> None:
     assert first.metadata == {"src": "a"}
 
 
+def test_rows_to_documents_folds_declared_columns_and_skips_engine_id() -> None:
+    table = pa.table(
+        {
+            "doc_id": ["a"],
+            "page_content": ["hi"],
+            "category": ["ml"],  # declared metadata column
+            "_id": [99],  # engine-internal id — must not leak into metadata
+            METADATA_JSON_COLUMN: [json.dumps({"extra": 1})],
+            SCORE_COLUMN: [0.5],
+        }
+    )
+    (doc, score), = rows_to_documents(
+        table, id_column="doc_id", text_column="page_content"
+    )
+    assert doc.id == "a"
+    assert score == 0.5
+    # Declared column folds in; the catch-all merges; "_id" is dropped.
+    assert doc.metadata == {"extra": 1, "category": "ml"}
+
+
+def test_rows_to_documents_score_none_when_not_projected() -> None:
+    table = pa.table(
+        {"doc_id": ["a"], "page_content": ["hi"], METADATA_JSON_COLUMN: ["{}"]}
+    )
+    (doc, score), = rows_to_documents(
+        table, id_column="doc_id", text_column="page_content"
+    )
+    assert score is None
+    assert doc.metadata == {}
+
+
 def test_rows_to_documents_empty() -> None:
     table = pa.table({"doc_id": pa.array([], type=pa.large_utf8())})
     assert (

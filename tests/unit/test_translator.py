@@ -1,6 +1,7 @@
 """Unit tests for the self-query translator and the logical-operator
 extensions to the filter compiler."""
 
+import pytest
 from langchain_core.structured_query import (
     Comparator,
     Comparison,
@@ -21,6 +22,38 @@ def test_visit_comparison() -> None:
         Comparison(comparator=Comparator.GTE, attribute="year", value=2020)
     )
     assert out == {"year": {"$gte": 2020}}
+
+
+@pytest.mark.parametrize(
+    ("comparator", "op"),
+    [
+        (Comparator.EQ, "$eq"),
+        (Comparator.NE, "$ne"),
+        (Comparator.GT, "$gt"),
+        (Comparator.GTE, "$gte"),
+        (Comparator.LT, "$lt"),
+        (Comparator.LTE, "$lte"),
+        (Comparator.IN, "$in"),
+        (Comparator.NIN, "$nin"),
+    ],
+)
+def test_every_comparator_maps(comparator: Comparator, op: str) -> None:
+    out = InfinoTranslator().visit_comparison(
+        Comparison(comparator=comparator, attribute="x", value=1)
+    )
+    assert out == {"x": {op: 1}}
+
+
+@pytest.mark.parametrize(
+    ("operator", "key"),
+    [(Operator.AND, "$and"), (Operator.OR, "$or"), (Operator.NOT, "$not")],
+)
+def test_every_operator_maps(operator: Operator, key: str) -> None:
+    operation = Operation(
+        operator=operator,
+        arguments=[Comparison(comparator=Comparator.EQ, attribute="x", value=1)],
+    )
+    assert key in InfinoTranslator().visit_operation(operation)
 
 
 def test_visit_operation_and() -> None:
@@ -77,6 +110,12 @@ def test_compile_or() -> None:
 
 def test_compile_not() -> None:
     where = _compile_filter({"$not": [{"category": "ml"}]}, ALLOWED)
+    assert where == "NOT (category = 'ml')"
+
+
+def test_compile_not_accepts_a_bare_dict() -> None:
+    # $not also accepts a mapping directly, not only a single-element list.
+    where = _compile_filter({"$not": {"category": "ml"}}, ALLOWED)
     assert where == "NOT (category = 'ml')"
 
 
