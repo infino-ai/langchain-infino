@@ -49,3 +49,8 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+# Pydantic evaluates field annotations at runtime, and PEP 604 unions
+# (`X | None`) fail there on Python 3.9 — keep Optional/Union forms.
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true

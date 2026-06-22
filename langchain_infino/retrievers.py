@@ -7,6 +7,8 @@ entirely in the engine.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
@@ -42,7 +44,7 @@ class InfinoBM25Retriever(BaseRetriever):
 
     vectorstore: InfinoVectorStore
     k: int = DEFAULT_K
-    mode: str | None = None
+    mode: Optional[str] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
