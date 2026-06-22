@@ -30,7 +30,7 @@ from langchain_infino._arrow import (
 )
 
 if TYPE_CHECKING:
-    from langchain_infino.retrievers import InfinoHybridRetriever
+    from langchain_infino.retrievers import InfinoBM25Retriever, InfinoHybridRetriever
 
 DEFAULT_K = 4
 # IVF builder clamps n_cent to <=64 below 100K rows; 64 is the effective max.
@@ -390,6 +390,14 @@ class InfinoVectorStore(VectorStore):
             result, id_column=self._id_column, text_column=self._text_column
         )
 
+    def _to_documents(self, result: pa.Table) -> list[Document]:
+        return [
+            doc
+            for doc, _ in rows_to_documents(
+                result, id_column=self._id_column, text_column=self._text_column
+            )
+        ]
+
     def _hybrid_search(self, query: str, k: int = DEFAULT_K) -> list[Document]:
         """BM25 + vector retrieval fused by RRF in a single SQL call."""
         query_vector = _vector_literal(self._embedding.embed_query(query))
@@ -402,19 +410,40 @@ class InfinoVectorStore(VectorStore):
             f"{sql_lit(query)}, {sql_lit(self._vector_column)}, "
             f"{sql_lit(query_vector)}, {k}) ORDER BY {SCORE_COLUMN} DESC"
         )
-        result = self._connection.query_sql(sql)
-        return [
-            doc
-            for doc, _ in rows_to_documents(
-                result, id_column=self._id_column, text_column=self._text_column
-            )
-        ]
+        return self._to_documents(self._connection.query_sql(sql))
+
+    def _bm25_search(
+        self, query: str, k: int = DEFAULT_K, mode: str | None = None
+    ) -> list[Document]:
+        """Lexical BM25 retrieval over the FTS-indexed text column."""
+        result = self._table.bm25_search(
+            self._text_column, query, k, mode=mode, projection=self._projection()
+        )
+        return self._to_documents(result)
+
+    def search_by_sql(self, sql: str) -> list[Document]:
+        """Run arbitrary SQL over the engine and map the rows to documents.
+
+        The escape hatch for what the typed methods don't cover — joins,
+        custom ``WHERE``, or the ``vector_search`` / ``hybrid_search`` TVFs.
+        Project the store's columns (id, text, declared metadata,
+        ``_metadata_json``, and optionally ``score``) for full documents.
+        """
+        return self._to_documents(self._connection.query_sql(sql))
 
     def as_hybrid_retriever(self, k: int = DEFAULT_K) -> InfinoHybridRetriever:
         """A retriever that fuses BM25 and vector search (RRF) per query."""
         from langchain_infino.retrievers import InfinoHybridRetriever
 
         return InfinoHybridRetriever(vectorstore=self, k=k)
+
+    def as_bm25_retriever(
+        self, k: int = DEFAULT_K, mode: str | None = None
+    ) -> InfinoBM25Retriever:
+        """A lexical BM25 retriever over the text column."""
+        from langchain_infino.retrievers import InfinoBM25Retriever
+
+        return InfinoBM25Retriever(vectorstore=self, k=k, mode=mode)
 
     @classmethod
     def from_texts(  # type: ignore[override]  # requires engine params (connection, table_name, dim) the base signature lacks

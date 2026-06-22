@@ -1,11 +1,15 @@
-"""Integration tests for metadata filtering, hybrid (RRF) retrieval, and MMR."""
+"""Integration tests for filtering, hybrid/BM25 retrieval, MMR, and SQL."""
 
 import infino
 import pyarrow as pa
 import pytest
 from langchain_core.embeddings import DeterministicFakeEmbedding
 
-from langchain_infino import InfinoHybridRetriever, InfinoVectorStore
+from langchain_infino import (
+    InfinoBM25Retriever,
+    InfinoHybridRetriever,
+    InfinoVectorStore,
+)
 
 EMBED_DIM = 16
 DOCS = [
@@ -127,3 +131,34 @@ def test_structured_filter_and_pushdown_together_raises(
         store.similarity_search(
             "x", k=3, filter={"category": "ml"}, filter_query="neural"
         )
+
+
+# --- lexical BM25 retrieval ---
+
+
+def test_bm25_retriever(store: InfinoVectorStore) -> None:
+    retriever = store.as_bm25_retriever(k=3)
+    assert isinstance(retriever, InfinoBM25Retriever)
+    docs = retriever.invoke("neural network")
+    assert docs
+    assert any("neural" in d.page_content for d in docs)
+
+
+def test_bm25_and_mode_requires_all_terms(store: InfinoVectorStore) -> None:
+    retriever = store.as_bm25_retriever(k=5, mode="and")
+    docs = retriever.invoke("deep learning")
+    assert docs
+    assert all("deep" in d.page_content and "learning" in d.page_content for d in docs)
+
+
+# --- SQL-native escape hatch ---
+
+
+def test_search_by_sql_maps_rows_to_documents(store: InfinoVectorStore) -> None:
+    docs = store.search_by_sql(
+        "SELECT doc_id, page_content, category, year, _metadata_json "
+        "FROM docs WHERE category = 'ml'"
+    )
+    assert docs
+    assert all(d.metadata["category"] == "ml" for d in docs)
+    assert all(d.id is not None for d in docs)

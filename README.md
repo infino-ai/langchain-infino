@@ -47,6 +47,12 @@ Early, but the core and the differentiators are in place.
 
 - **Hybrid (RRF) retrieval** — `store.as_hybrid_retriever()` fuses BM25 and
   vector search in a single SQL call, no separate reranking step.
+- **Lexical BM25 retrieval** — `store.as_bm25_retriever()` for pure full-text
+  ranking over the same table; `mode="and"` requires all query terms.
+- **SQL-native search** — `store.search_by_sql(sql)` runs arbitrary SQL —
+  joins, custom `WHERE`, or the `vector_search` / `hybrid_search` table
+  functions — and maps the rows back to `Document`s. The escape hatch for
+  anything the typed methods don't cover.
 - **Metadata filtering** — promote metadata keys to real columns
   (`metadata_columns=`) and filter with the LangChain operator form
   (`filter={"year": {"$gte": 2023}}`, plus `$and` / `$or` / `$not`); the
