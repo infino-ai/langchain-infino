@@ -7,10 +7,10 @@ install:
 test: unit
 
 unit:
-	pytest tests/unit_tests -q
+	pytest tests/unit -q
 
 integration:
-	pytest tests/integration_tests -q
+	pytest tests/integration -q
 
 lint:
 	ruff check .

@@ -23,7 +23,7 @@ jobs:
       - run: pip install -e ".[test,lint]"
       - run: ruff check .
       - run: mypy langchain_infino
-      - run: pytest tests/unit_tests -q
+      - run: pytest tests/unit -q
 
   # The full suite (compliance + integration) needs the infino engine and an
   # embedding model, so it runs on demand and on the weekly schedule rather
@@ -37,4 +37,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[test,lint]"
-      - run: pytest tests/integration_tests -q
+      - run: pytest tests/integration -q

@@ -69,3 +69,19 @@ def test_delete_removes_rows(store: InfinoVectorStore) -> None:
 def test_delete_empty_is_noop(store: InfinoVectorStore) -> None:
     assert store.delete([]) is False
     assert store.delete(None) is False
+
+
+def test_add_texts_rejects_mismatched_ids(store: InfinoVectorStore) -> None:
+    with pytest.raises(ValueError, match="same length"):
+        store.add_texts(["a", "b"], ids=["only-one"])
+
+
+def test_add_texts_rejects_mismatched_metadatas(store: InfinoVectorStore) -> None:
+    with pytest.raises(ValueError, match="same length"):
+        store.add_texts(["a", "b"], metadatas=[{"k": 1}])
+
+
+def test_relevance_scores_are_in_unit_interval(store: InfinoVectorStore) -> None:
+    results = store.similarity_search_with_relevance_scores(TEXTS[0], k=3)
+    assert results
+    assert all(0.0 <= score <= 1.0 for _, score in results)
