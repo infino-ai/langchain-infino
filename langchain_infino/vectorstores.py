@@ -9,7 +9,7 @@ filtered, MMR, and hybrid (RRF) retrieval all run over that one table.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 from uuid import uuid4
 
 import infino
@@ -32,10 +32,14 @@ from langchain_infino._arrow import (
 if TYPE_CHECKING:
     from langchain_infino.retrievers import InfinoBM25Retriever, InfinoHybridRetriever
 
+# Mirror the engine's accepted values so the types flow through unchanged.
+Metric = Literal["cosine", "l2sq", "l2", "negdot", "dot"]
+SearchMode = Literal["or", "and"]
+
 DEFAULT_K = 4
 # IVF builder clamps n_cent to <=64 below 100K rows; 64 is the effective max.
 DEFAULT_N_CENT = 64
-DEFAULT_METRIC = "cosine"
+DEFAULT_METRIC: Metric = "cosine"
 DEFAULT_TEXT_COLUMN = "page_content"
 DEFAULT_VECTOR_COLUMN = "embedding"
 DEFAULT_ID_COLUMN = "doc_id"
@@ -102,7 +106,7 @@ class InfinoVectorStore(VectorStore):
         embedding: Embeddings,
         *,
         dim: int,
-        metric: str = DEFAULT_METRIC,
+        metric: Metric = DEFAULT_METRIC,
         text_column: str = DEFAULT_TEXT_COLUMN,
         vector_column: str = DEFAULT_VECTOR_COLUMN,
         id_column: str = DEFAULT_ID_COLUMN,
@@ -197,7 +201,7 @@ class InfinoVectorStore(VectorStore):
         *,
         filter_query: str | None = None,
         filter_column: str | None = None,
-        filter_mode: str | None = None,
+        filter_mode: SearchMode | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         embedding = self._embedding.embed_query(query)
@@ -219,7 +223,7 @@ class InfinoVectorStore(VectorStore):
         *,
         filter_query: str | None = None,
         filter_column: str | None = None,
-        filter_mode: str | None = None,
+        filter_mode: SearchMode | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         results = self._search(
@@ -240,7 +244,7 @@ class InfinoVectorStore(VectorStore):
         *,
         filter_query: str | None = None,
         filter_column: str | None = None,
-        filter_mode: str | None = None,
+        filter_mode: SearchMode | None = None,
         **kwargs: Any,
     ) -> list[tuple[Document, float]]:
         embedding = self._embedding.embed_query(query)
@@ -264,7 +268,7 @@ class InfinoVectorStore(VectorStore):
         *,
         filter_query: str | None = None,
         filter_column: str | None = None,
-        filter_mode: str | None = None,
+        filter_mode: SearchMode | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         # Stored vectors can't be read back (not projectable, no point-lookup),
@@ -349,7 +353,7 @@ class InfinoVectorStore(VectorStore):
         *,
         filter_query: str | None = None,
         filter_column: str | None = None,
-        filter_mode: str | None = None,
+        filter_mode: SearchMode | None = None,
     ) -> list[tuple[Document, float | None]]:
         # Not composable in one engine call: `filter` is a post-rank SQL WHERE,
         # `filter_query` an FTS pre-filter the kNN honors before ranking.
@@ -413,7 +417,7 @@ class InfinoVectorStore(VectorStore):
         return self._to_documents(self._connection.query_sql(sql))
 
     def _bm25_search(
-        self, query: str, k: int = DEFAULT_K, mode: str | None = None
+        self, query: str, k: int = DEFAULT_K, mode: SearchMode | None = None
     ) -> list[Document]:
         """Lexical BM25 retrieval over the FTS-indexed text column."""
         result = self._table.bm25_search(
@@ -438,7 +442,7 @@ class InfinoVectorStore(VectorStore):
         return InfinoHybridRetriever(vectorstore=self, k=k)
 
     def as_bm25_retriever(
-        self, k: int = DEFAULT_K, mode: str | None = None
+        self, k: int = DEFAULT_K, mode: SearchMode | None = None
     ) -> InfinoBM25Retriever:
         """A lexical BM25 retriever over the text column."""
         from langchain_infino.retrievers import InfinoBM25Retriever
@@ -456,7 +460,7 @@ class InfinoVectorStore(VectorStore):
         table_name: str,
         dim: int,
         ids: list[str] | None = None,
-        metric: str = DEFAULT_METRIC,
+        metric: Metric = DEFAULT_METRIC,
         n_cent: int = DEFAULT_N_CENT,
         text_column: str = DEFAULT_TEXT_COLUMN,
         vector_column: str = DEFAULT_VECTOR_COLUMN,

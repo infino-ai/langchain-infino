@@ -14,7 +14,7 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from pydantic import ConfigDict
 
-from langchain_infino.vectorstores import DEFAULT_K, InfinoVectorStore
+from langchain_infino.vectorstores import DEFAULT_K, InfinoVectorStore, SearchMode
 
 
 class InfinoHybridRetriever(BaseRetriever):
@@ -44,7 +44,7 @@ class InfinoBM25Retriever(BaseRetriever):
 
     vectorstore: InfinoVectorStore
     k: int = DEFAULT_K
-    mode: Optional[str] = None
+    mode: Optional[SearchMode] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
