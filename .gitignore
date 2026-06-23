@@ -1,0 +1,21 @@
+# Python build / cache artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+.smoke-venv/
+
+# Test / type caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor / OS junk
+.DS_Store
+*.swp
