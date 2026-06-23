@@ -33,3 +33,30 @@ class TestInfinoVectorStore(VectorStoreIntegrationTests):
             table_name="compliance",
             dim=EMBED_DIM,
         )
+
+    # The published infino engine under-returns from vector_search after a
+    # delete (no backfill past tombstones), so these delete cases fail at
+    # k=1. Tracked upstream: infino-ai/infino#259. xfail (non-strict — it
+    # only triggers on native x86, and passes on arm) until a fixed engine
+    # release lands and the pin is bumped; then these revert to plain passes.
+    _DELETE_BUG = pytest.mark.xfail(
+        reason="infino#259: vector_search under-returns after delete", strict=False
+    )
+
+    @_DELETE_BUG
+    def test_deleting_documents(self, vectorstore: VectorStore) -> None:
+        super().test_deleting_documents(vectorstore)
+
+    @_DELETE_BUG
+    def test_deleting_bulk_documents(self, vectorstore: VectorStore) -> None:
+        super().test_deleting_bulk_documents(vectorstore)
+
+    @_DELETE_BUG
+    async def test_deleting_documents_async(self, vectorstore: VectorStore) -> None:
+        await super().test_deleting_documents_async(vectorstore)
+
+    @_DELETE_BUG
+    async def test_deleting_bulk_documents_async(
+        self, vectorstore: VectorStore
+    ) -> None:
+        await super().test_deleting_bulk_documents_async(vectorstore)
