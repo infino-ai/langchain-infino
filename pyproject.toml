@@ -13,7 +13,7 @@ authors = [{ name = "The Infino Authors" }]
 keywords = ["langchain", "infino", "vectorstore", "retrieval", "rag", "hybrid-search", "bm25", "vector-search"]
 dependencies = [
     "langchain-core>=0.3",
-    "infino>=0.1.0",
+    "infino>=0.1.3",
     "pyarrow>=14",
     "numpy>=1.26",
 ]

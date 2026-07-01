@@ -403,18 +403,16 @@ class InfinoVectorStore(VectorStore):
         ]
 
     def _hybrid_search(self, query: str, k: int = DEFAULT_K) -> list[Document]:
-        """BM25 + vector retrieval fused by RRF in a single SQL call."""
-        query_vector = _vector_literal(self._embedding.embed_query(query))
-        # Project explicitly (SELECT * would leak engine-internal columns into
-        # metadata). RRF score is larger-is-better, hence DESC.
-        columns = ", ".join(self._projection())
-        sql = (
-            f"SELECT {columns} FROM hybrid_search("
-            f"{sql_lit(self._table_name)}, {sql_lit(self._text_column)}, "
-            f"{sql_lit(query)}, {sql_lit(self._vector_column)}, "
-            f"{sql_lit(query_vector)}, {k}) ORDER BY {SCORE_COLUMN} DESC"
+        """BM25 + vector retrieval fused by RRF in one engine call."""
+        result = self._table.hybrid_search(
+            self._text_column,
+            query,
+            self._vector_column,
+            self._embedding.embed_query(query),
+            k,
+            projection=self._projection(),
         )
-        return self._to_documents(self._connection.query_sql(sql))
+        return self._to_documents(result)
 
     def _bm25_search(
         self, query: str, k: int = DEFAULT_K, mode: SearchMode | None = None

@@ -20,8 +20,8 @@ from langchain_infino.vectorstores import DEFAULT_K, InfinoVectorStore, SearchMo
 class InfinoHybridRetriever(BaseRetriever):
     """Retriever that fuses BM25 and vector search (RRF) per query.
 
-    The fusion runs entirely in the engine via the ``hybrid_search`` SQL
-    function — no separate reranking round-trip.
+    The fusion runs entirely in the engine via ``hybrid_search`` — no
+    separate reranking round-trip.
     """
 
     vectorstore: InfinoVectorStore
