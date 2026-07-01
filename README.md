@@ -1,6 +1,7 @@
 # langchain-infino
 
 [![PyPI](https://img.shields.io/pypi/v/langchain-infino.svg)](https://pypi.org/project/langchain-infino/)
+[![Downloads](https://img.shields.io/pypi/dm/langchain-infino.svg)](https://pypi.org/project/langchain-infino/)
 [![Python](https://img.shields.io/pypi/pyversions/langchain-infino.svg)](https://pypi.org/project/langchain-infino/)
 [![License](https://img.shields.io/pypi/l/langchain-infino.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
@@ -77,6 +78,36 @@ retriever = store.as_retriever()
   and `as_hybrid_retriever()` (RRF fusion).
 - **Dimensions** — embeddings must be `[16, 4096]`-dimensional (engine limit)
   and match the table's declared `dim`.
+
+## Object storage (S3 / Azure)
+
+The store operates on any `infino.Connection`, so it runs against local disk
+or cloud object storage unchanged — the URI and `storage_options` you pass to
+`infino.connect` are the only difference. Keys are the standard `object_store`
+config strings (`aws_*` / `azure_*`); ambient credentials (IAM role, env vars)
+need no `storage_options` at all.
+
+```python
+# Amazon S3 (or S3-compatible: set aws_endpoint, aws_allow_http for MinIO/R2).
+connection = infino.connect("s3://bucket/prefix", storage_options={
+    "aws_access_key_id": "...",
+    "aws_secret_access_key": "...",
+    "aws_region": "us-east-1",
+})
+
+# Azure Blob Storage.
+connection = infino.connect("az://container/prefix", storage_options={
+    "azure_storage_account_name": "...",
+    "azure_storage_account_key": "...",
+})
+
+store = InfinoVectorStore.from_texts(
+    texts, embedding, connection=connection, table_name="docs", dim=1536,
+)
+```
+
+Pass `validate=True` to `connect` to probe the store at connect time so bad
+credentials fail there rather than on first read.
 
 ## Adding and managing documents
 
