@@ -1,6 +1,7 @@
 # langchain-infino
 
 [![PyPI](https://img.shields.io/pypi/v/langchain-infino.svg)](https://pypi.org/project/langchain-infino/)
+[![Downloads](https://img.shields.io/pypi/dm/langchain-infino.svg)](https://pypi.org/project/langchain-infino/)
 [![Python](https://img.shields.io/pypi/pyversions/langchain-infino.svg)](https://pypi.org/project/langchain-infino/)
 [![License](https://img.shields.io/pypi/l/langchain-infino.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 
