@@ -9,7 +9,7 @@ description = "LangChain integration for Infino — vector, BM25, and hybrid ret
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
-authors = [{ name = "The Infino Authors" }]
+authors = [{ name = "Team Infino AI" }]
 keywords = [
     "langchain", "infino", "vectorstore", "retrieval", "rag", "hybrid-search",
     "bm25", "vector-search", "vector-database", "semantic-search", "embeddings",
