@@ -10,7 +10,27 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }
 authors = [{ name = "The Infino Authors" }]
-keywords = ["langchain", "infino", "vectorstore", "retrieval", "rag", "hybrid-search", "bm25", "vector-search"]
+keywords = [
+    "langchain", "infino", "vectorstore", "retrieval", "rag", "hybrid-search",
+    "bm25", "vector-search", "vector-database", "semantic-search", "embeddings",
+    "retriever", "self-query", "semantic-cache", "object-storage", "s3",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: Indexing",
+    "Typing :: Typed",
+]
 dependencies = [
     "langchain-core>=0.3",
     "infino>=0.1.3",
@@ -21,6 +41,8 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/infino-ai/langchain-infino"
 Repository = "https://github.com/infino-ai/langchain-infino"
+Issues = "https://github.com/infino-ai/langchain-infino/issues"
+Changelog = "https://github.com/infino-ai/langchain-infino/releases"
 
 [project.optional-dependencies]
 # langchain-tests carries the standard VectorStore compliance suites; the
