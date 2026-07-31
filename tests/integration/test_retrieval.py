@@ -151,6 +151,69 @@ def test_bm25_and_mode_requires_all_terms(store: InfinoVectorStore) -> None:
     assert all("deep" in d.page_content and "learning" in d.page_content for d in docs)
 
 
+def test_bm25_global_stats_over_a_fragmented_table(tmp_path) -> None:
+    """Corpus-wide term statistics rank a table split across many files.
+
+    Each append commits its own storage file, which is the case global stats
+    exist for — the per-file document frequencies diverge from the corpus's.
+    Score-level equivalence with a unified index is the engine's own test;
+    here we pin that the multi-file gather path returns the right documents.
+    """
+    store = InfinoVectorStore.from_texts(
+        ["alpha rare term"],
+        DeterministicFakeEmbedding(size=EMBED_DIM),
+        connection=infino.connect(str(tmp_path / "fragmented")),
+        table_name="docs",
+        dim=EMBED_DIM,
+    )
+    for i in range(4):
+        store.add_texts([f"common filler {i}", f"alpha common {i}"])
+
+    docs = store.as_bm25_retriever(k=5, stats="global").invoke("alpha")
+    assert docs
+    assert all("alpha" in d.page_content for d in docs)
+
+
+# --- IVF recall knobs ---
+
+
+def test_recall_knobs_on_vector_and_hybrid(store: InfinoVectorStore) -> None:
+    docs = store.similarity_search("learning", k=3, nprobe=8, rerank_mult=4)
+    assert len(docs) == 3
+    hybrid = store.as_hybrid_retriever(k=3, nprobe=8, rerank_mult=4)
+    assert hybrid.invoke("neural network")
+
+
+def test_recall_knobs_survive_the_pushdown_prefilter(store: InfinoVectorStore) -> None:
+    docs = store.similarity_search(
+        "anything", k=5, filter_query="neural", nprobe=8, rerank_mult=4
+    )
+    assert docs
+    assert all("neural" in d.page_content for d in docs)
+
+
+def test_recall_knobs_with_structured_filter_raise(store: InfinoVectorStore) -> None:
+    with pytest.raises(ValueError, match="unsupported alongside"):
+        store.similarity_search("x", k=3, filter={"category": "ml"}, nprobe=8)
+
+
+# --- FTS analyzer selection ---
+
+
+def test_standard_analyzer_indexes_non_ascii_terms(tmp_path) -> None:
+    connection = infino.connect(str(tmp_path / "unicode-db"))
+    store = InfinoVectorStore.from_texts(
+        ["un café à Paris", "plain ascii text"],
+        DeterministicFakeEmbedding(size=EMBED_DIM),
+        connection=connection,
+        table_name="docs",
+        dim=EMBED_DIM,
+        analyzer="standard",
+    )
+    docs = store.as_bm25_retriever(k=2).invoke("café")
+    assert [d.page_content for d in docs] == ["un café à Paris"]
+
+
 # --- SQL-native escape hatch ---
 
 

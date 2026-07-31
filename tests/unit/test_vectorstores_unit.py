@@ -31,3 +31,9 @@ def test_l2_relevance_is_monotone_decreasing() -> None:
     assert fn(1.0) == pytest.approx(0.5)
     assert fn(3.0) == pytest.approx(0.25)
     assert _RELEVANCE_FNS["l2"](0.0) == 1.0
+
+
+def test_l2_relevance_clamps_float_noise_on_exact_matches() -> None:
+    # An exact match can come back a hair below zero; relevance stays in [0, 1].
+    assert _RELEVANCE_FNS["l2sq"](-1.9e-06) == 1.0
+    assert _RELEVANCE_FNS["l2"](-1.9e-06) == 1.0
