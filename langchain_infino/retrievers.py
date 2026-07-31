@@ -14,41 +14,56 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from pydantic import ConfigDict
 
-from langchain_infino.vectorstores import DEFAULT_K, InfinoVectorStore, SearchMode
+from langchain_infino.vectorstores import (
+    DEFAULT_K,
+    Bm25Stats,
+    InfinoVectorStore,
+    SearchMode,
+)
 
 
 class InfinoHybridRetriever(BaseRetriever):
     """Retriever that fuses BM25 and vector search (RRF) per query.
 
     The fusion runs entirely in the engine via ``hybrid_search`` — no
-    separate reranking round-trip.
+    separate reranking round-trip. ``nprobe`` and ``rerank_mult`` trade
+    latency for recall on the vector leg.
     """
 
     vectorstore: InfinoVectorStore
     k: int = DEFAULT_K
+    nprobe: Optional[int] = None
+    rerank_mult: Optional[int] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def _get_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun
     ) -> list[Document]:
-        return self.vectorstore._hybrid_search(query, self.k)
+        return self.vectorstore._hybrid_search(
+            query, self.k, nprobe=self.nprobe, rerank_mult=self.rerank_mult
+        )
 
 
 class InfinoBM25Retriever(BaseRetriever):
     """Lexical BM25 retriever over the FTS-indexed text column.
 
     ``mode`` joins query terms: ``"or"`` (default) matches any, ``"and"``
-    requires all.
+    requires all. ``stats="global"`` scores against corpus-wide term
+    statistics instead of per-superfile ones, so ranking stays stable as
+    the table grows.
     """
 
     vectorstore: InfinoVectorStore
     k: int = DEFAULT_K
     mode: Optional[SearchMode] = None
+    stats: Optional[Bm25Stats] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def _get_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun
     ) -> list[Document]:
-        return self.vectorstore._bm25_search(query, self.k, self.mode)
+        return self.vectorstore._bm25_search(
+            query, self.k, self.mode, stats=self.stats
+        )

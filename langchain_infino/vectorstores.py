@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 # Mirror the engine's accepted values so the types flow through unchanged.
 Metric = Literal["cosine", "l2sq", "l2", "negdot", "dot"]
 SearchMode = Literal["or", "and"]
+Bm25Stats = Literal["per_superfile", "global"]
 
 DEFAULT_K = 4
 # IVF builder clamps n_cent to <=64 below 100K rows; 64 is the effective max.
@@ -66,9 +67,10 @@ _LOGICAL_OPERATORS = {"$and": " AND ", "$or": " OR "}
 _RELEVANCE_FNS: dict[str, Callable[[float], float]] = {
     # Cosine distance is 1 - cosine_similarity, already in [0, 2]; clamp.
     "cosine": lambda d: max(0.0, min(1.0, 1.0 - d)),
-    # Squared-L2 is unbounded above; map monotonically into (0, 1].
-    "l2sq": lambda d: 1.0 / (1.0 + d),
-    "l2": lambda d: 1.0 / (1.0 + d),
+    # Squared-L2 is unbounded above; map monotonically into (0, 1]. An exact
+    # match can score a hair below zero in float, so floor the distance.
+    "l2sq": lambda d: 1.0 / (1.0 + max(0.0, d)),
+    "l2": lambda d: 1.0 / (1.0 + max(0.0, d)),
 }
 
 
@@ -202,6 +204,8 @@ class InfinoVectorStore(VectorStore):
         filter_query: str | None = None,
         filter_column: str | None = None,
         filter_mode: SearchMode | None = None,
+        nprobe: int | None = None,
+        rerank_mult: int | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         embedding = self._embedding.embed_query(query)
@@ -212,6 +216,8 @@ class InfinoVectorStore(VectorStore):
             filter_query=filter_query,
             filter_column=filter_column,
             filter_mode=filter_mode,
+            nprobe=nprobe,
+            rerank_mult=rerank_mult,
             **kwargs,
         )
 
@@ -224,6 +230,8 @@ class InfinoVectorStore(VectorStore):
         filter_query: str | None = None,
         filter_column: str | None = None,
         filter_mode: SearchMode | None = None,
+        nprobe: int | None = None,
+        rerank_mult: int | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         results = self._search(
@@ -233,6 +241,8 @@ class InfinoVectorStore(VectorStore):
             filter_query=filter_query,
             filter_column=filter_column,
             filter_mode=filter_mode,
+            nprobe=nprobe,
+            rerank_mult=rerank_mult,
         )
         return [doc for doc, _ in results]
 
@@ -245,6 +255,8 @@ class InfinoVectorStore(VectorStore):
         filter_query: str | None = None,
         filter_column: str | None = None,
         filter_mode: SearchMode | None = None,
+        nprobe: int | None = None,
+        rerank_mult: int | None = None,
         **kwargs: Any,
     ) -> list[tuple[Document, float]]:
         embedding = self._embedding.embed_query(query)
@@ -255,6 +267,8 @@ class InfinoVectorStore(VectorStore):
             filter_query=filter_query,
             filter_column=filter_column,
             filter_mode=filter_mode,
+            nprobe=nprobe,
+            rerank_mult=rerank_mult,
         )
         return [(doc, score if score is not None else 0.0) for doc, score in results]
 
@@ -269,6 +283,8 @@ class InfinoVectorStore(VectorStore):
         filter_query: str | None = None,
         filter_column: str | None = None,
         filter_mode: SearchMode | None = None,
+        nprobe: int | None = None,
+        rerank_mult: int | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         # Stored vectors can't be read back (not projectable, no point-lookup),
@@ -281,6 +297,8 @@ class InfinoVectorStore(VectorStore):
             filter_query=filter_query,
             filter_column=filter_column,
             filter_mode=filter_mode,
+            nprobe=nprobe,
+            rerank_mult=rerank_mult,
         )
         if not candidates:
             return []
@@ -354,6 +372,8 @@ class InfinoVectorStore(VectorStore):
         filter_query: str | None = None,
         filter_column: str | None = None,
         filter_mode: SearchMode | None = None,
+        nprobe: int | None = None,
+        rerank_mult: int | None = None,
     ) -> list[tuple[Document, float | None]]:
         # Not composable in one engine call: `filter` is a post-rank SQL WHERE,
         # `filter_query` an FTS pre-filter the kNN honors before ranking.
@@ -361,6 +381,13 @@ class InfinoVectorStore(VectorStore):
             raise ValueError(
                 "pass either `filter` (structured SQL predicate, post-rank) or "
                 "`filter_query` (text pushdown pre-filter), not both"
+            )
+        # The vector_search TVF takes only (table, column, query, k), so the
+        # SQL path has nowhere to carry the recall knobs.
+        if filter and (nprobe is not None or rerank_mult is not None):
+            raise ValueError(
+                "`nprobe` / `rerank_mult` are unsupported alongside `filter`; "
+                "use `filter_query` or search_by_sql for that combination"
             )
         projection = self._projection()
         if filter:
@@ -381,6 +408,8 @@ class InfinoVectorStore(VectorStore):
                 self._vector_column,
                 list(embedding),
                 k,
+                nprobe=nprobe,
+                rerank_mult=rerank_mult,
                 filter_column=filter_column or self._text_column,
                 filter_query=filter_query,
                 filter_mode=filter_mode,
@@ -388,7 +417,12 @@ class InfinoVectorStore(VectorStore):
             )
         else:
             result = self._table.vector_search(
-                self._vector_column, list(embedding), k, projection=projection
+                self._vector_column,
+                list(embedding),
+                k,
+                nprobe=nprobe,
+                rerank_mult=rerank_mult,
+                projection=projection,
             )
         return rows_to_documents(
             result, id_column=self._id_column, text_column=self._text_column
@@ -402,7 +436,14 @@ class InfinoVectorStore(VectorStore):
             )
         ]
 
-    def _hybrid_search(self, query: str, k: int = DEFAULT_K) -> list[Document]:
+    def _hybrid_search(
+        self,
+        query: str,
+        k: int = DEFAULT_K,
+        *,
+        nprobe: int | None = None,
+        rerank_mult: int | None = None,
+    ) -> list[Document]:
         """BM25 + vector retrieval fused by RRF in one engine call."""
         result = self._table.hybrid_search(
             self._text_column,
@@ -410,16 +451,28 @@ class InfinoVectorStore(VectorStore):
             self._vector_column,
             self._embedding.embed_query(query),
             k,
+            nprobe=nprobe,
+            rerank_mult=rerank_mult,
             projection=self._projection(),
         )
         return self._to_documents(result)
 
     def _bm25_search(
-        self, query: str, k: int = DEFAULT_K, mode: SearchMode | None = None
+        self,
+        query: str,
+        k: int = DEFAULT_K,
+        mode: SearchMode | None = None,
+        *,
+        stats: Bm25Stats | None = None,
     ) -> list[Document]:
         """Lexical BM25 retrieval over the FTS-indexed text column."""
         result = self._table.bm25_search(
-            self._text_column, query, k, mode=mode, projection=self._projection()
+            self._text_column,
+            query,
+            k,
+            mode=mode,
+            stats=stats,
+            projection=self._projection(),
         )
         return self._to_documents(result)
 
@@ -433,19 +486,31 @@ class InfinoVectorStore(VectorStore):
         """
         return self._to_documents(self._connection.query_sql(sql))
 
-    def as_hybrid_retriever(self, k: int = DEFAULT_K) -> InfinoHybridRetriever:
+    def as_hybrid_retriever(
+        self,
+        k: int = DEFAULT_K,
+        *,
+        nprobe: int | None = None,
+        rerank_mult: int | None = None,
+    ) -> InfinoHybridRetriever:
         """A retriever that fuses BM25 and vector search (RRF) per query."""
         from langchain_infino.retrievers import InfinoHybridRetriever
 
-        return InfinoHybridRetriever(vectorstore=self, k=k)
+        return InfinoHybridRetriever(
+            vectorstore=self, k=k, nprobe=nprobe, rerank_mult=rerank_mult
+        )
 
     def as_bm25_retriever(
-        self, k: int = DEFAULT_K, mode: SearchMode | None = None
+        self,
+        k: int = DEFAULT_K,
+        mode: SearchMode | None = None,
+        *,
+        stats: Bm25Stats | None = None,
     ) -> InfinoBM25Retriever:
         """A lexical BM25 retriever over the text column."""
         from langchain_infino.retrievers import InfinoBM25Retriever
 
-        return InfinoBM25Retriever(vectorstore=self, k=k, mode=mode)
+        return InfinoBM25Retriever(vectorstore=self, k=k, mode=mode, stats=stats)
 
     @classmethod
     def from_texts(  # type: ignore[override]  # requires engine params (connection, table_name, dim) the base signature lacks
@@ -460,19 +525,25 @@ class InfinoVectorStore(VectorStore):
         ids: list[str] | None = None,
         metric: Metric = DEFAULT_METRIC,
         n_cent: int = DEFAULT_N_CENT,
+        analyzer: str | None = None,
         text_column: str = DEFAULT_TEXT_COLUMN,
         vector_column: str = DEFAULT_VECTOR_COLUMN,
         id_column: str = DEFAULT_ID_COLUMN,
         metadata_columns: Sequence[pa.Field] = (),
         **kwargs: Any,
     ) -> InfinoVectorStore:
-        """Create the table, then embed and insert ``texts``."""
+        """Create the table, then embed and insert ``texts``.
+
+        ``analyzer`` names the FTS tokenizer for the text column (engine
+        default when omitted); the id column always keeps the default so
+        ``exact_match`` resolves ids verbatim.
+        """
         schema = _build_schema(
             dim, text_column, vector_column, id_column, metadata_columns
         )
         indexes = (
             infino.IndexSpec()
-            .fts(text_column)
+            .fts(text_column, analyzer)
             .fts(id_column)
             .vector(vector_column, dim, n_cent, metric)
         )

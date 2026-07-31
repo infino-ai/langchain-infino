@@ -107,7 +107,18 @@ store = InfinoVectorStore.from_texts(
 ```
 
 Pass `validate=True` to `connect` to probe the store at connect time so bad
-credentials fail there rather than on first read.
+credentials fail there rather than on first read. `connection_memory_budget_bytes`
+caps what one connection may hold; an ingest or query that would exceed it
+raises `infino.ConnectionMemoryBudgetError` (a recoverable subclass of
+`infino.InfinoError`, the base for every engine failure) so you can narrow the
+query, split the ingest, or raise the budget.
+
+For a hosted Infino target, pass `api_key=` and provision the database once:
+
+```python
+connection = infino.connect("https://...", api_key="...")
+connection.create_database()  # no-op against a local or object-store URI
+```
 
 ## Adding and managing documents
 
@@ -207,6 +218,49 @@ retriever = store.as_bm25_retriever(k=4, mode="and")  # require all terms
 retriever.invoke("gradient descent")
 ```
 
+By default each storage file scores against its own term statistics, so as a
+table fragments the same document's score drifts with which file it landed in.
+`stats="global"` scores against corpus-wide statistics instead — a fragmented
+table then ranks exactly like one unified index, for one extra
+document-frequency pass over the files holding the query's terms.
+
+```python
+retriever = store.as_bm25_retriever(k=4, stats="global")
+```
+
+## Text analysis
+
+The text column's FTS index is tokenized by `ascii_lower` — ASCII-folding and
+lowercasing — unless you pick another analyzer at table creation. Use
+`standard` (UAX #29 word segmentation with full Unicode lowercasing) to keep
+non-ASCII terms searchable.
+
+```python
+store = InfinoVectorStore.from_texts(
+    texts, embedding,
+    connection=connection, table_name="docs", dim=1536,
+    analyzer="standard",
+)
+```
+
+The id column always keeps the default so `get_by_ids` resolves ids verbatim.
+
+## Recall tuning
+
+The vector index is IVF: a query probes some cells, then reranks the
+candidates against full-precision vectors. `nprobe` widens the probe, and
+`rerank_mult` deepens the candidate pool relative to `k` — both trade latency
+for recall, and both default to the engine's values.
+
+```python
+store.similarity_search("optimizers", k=10, nprobe=16, rerank_mult=4)
+store.as_hybrid_retriever(k=10, nprobe=16, rerank_mult=4)
+```
+
+They apply to the vector and hybrid paths, including the text-pushdown
+pre-filter. The structured `filter` path ranks through the `vector_search`
+table function, which has no slot for them, so combining the two raises.
+
 ## Self-query
 
 `InfinoTranslator` plugs into LangChain's `SelfQueryRetriever`, lowering an
@@ -268,20 +322,22 @@ The async methods (`aadd_texts`, `asimilarity_search`, …) are inherited from
 
 - `InfinoVectorStore(connection, table_name, embedding, *, dim, metric="cosine", text_column="page_content", vector_column="embedding", id_column="doc_id", metadata_columns=())`
   — opens an existing table.
-  - `from_texts(texts, embedding, metadatas=None, *, connection, table_name, dim, ids=None, metric="cosine", n_cent=64, text_column=..., vector_column=..., id_column=..., metadata_columns=()) -> InfinoVectorStore`
+  - `from_texts(texts, embedding, metadatas=None, *, connection, table_name, dim, ids=None, metric="cosine", n_cent=64, analyzer=None, text_column=..., vector_column=..., id_column=..., metadata_columns=()) -> InfinoVectorStore`
     — creates and populates the table.
   - `add_texts(texts, metadatas=None, *, ids=None) -> list[str]` — idempotent upsert.
-  - `similarity_search(query, k=4, filter=None, *, filter_query=None, filter_column=None, filter_mode=None) -> list[Document]`
+  - `similarity_search(query, k=4, filter=None, *, filter_query=None, filter_column=None, filter_mode=None, nprobe=None, rerank_mult=None) -> list[Document]`
   - `similarity_search_with_score(...)`, `similarity_search_by_vector(...)`
   - `max_marginal_relevance_search(query, k=4, fetch_k=20, lambda_mult=0.5, filter=None, ...)`
   - `delete(ids) -> bool`, `get_by_ids(ids) -> list[Document]`
   - `search_by_sql(sql) -> list[Document]`
-  - `as_retriever(...)`, `as_hybrid_retriever(k=4)`, `as_bm25_retriever(k=4, mode=None)`
+  - `as_retriever(...)`, `as_hybrid_retriever(k=4, *, nprobe=None, rerank_mult=None)`, `as_bm25_retriever(k=4, mode=None, *, stats=None)`
 - `InfinoHybridRetriever`, `InfinoBM25Retriever` — `BaseRetriever`s wrapping a store.
 - `InfinoTranslator` — `StructuredQuery` → SQL filter, for `SelfQueryRetriever`.
 - `InfinoSemanticCache(connection, embedding, *, dim, table_name="langchain_llm_cache", score_threshold=0.05)`
 
-`metric` is `"cosine"` (default), `"l2sq"` / `"l2"`, or `"negdot"` / `"dot"`.
+`metric` is `"cosine"` (default), `"l2sq"` / `"l2"`, or `"negdot"` / `"dot"`;
+`analyzer` is `"ascii_lower"` (default) or `"standard"`; `stats` is
+`"per_superfile"` (default) or `"global"`.
 See [Infino](https://github.com/infino-ai/infino) for engine internals.
 
 ## Development

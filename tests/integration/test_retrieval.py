@@ -151,6 +151,53 @@ def test_bm25_and_mode_requires_all_terms(store: InfinoVectorStore) -> None:
     assert all("deep" in d.page_content and "learning" in d.page_content for d in docs)
 
 
+def test_bm25_global_stats_ranks_like_the_default(store: InfinoVectorStore) -> None:
+    # One superfile here, so corpus-wide idf must reproduce the local ranking.
+    local = store.as_bm25_retriever(k=3).invoke("neural network")
+    corpus = store.as_bm25_retriever(k=3, stats="global").invoke("neural network")
+    assert [d.page_content for d in corpus] == [d.page_content for d in local]
+
+
+# --- IVF recall knobs ---
+
+
+def test_recall_knobs_on_vector_and_hybrid(store: InfinoVectorStore) -> None:
+    docs = store.similarity_search("learning", k=3, nprobe=8, rerank_mult=4)
+    assert len(docs) == 3
+    hybrid = store.as_hybrid_retriever(k=3, nprobe=8, rerank_mult=4)
+    assert hybrid.invoke("neural network")
+
+
+def test_recall_knobs_survive_the_pushdown_prefilter(store: InfinoVectorStore) -> None:
+    docs = store.similarity_search(
+        "anything", k=5, filter_query="neural", nprobe=8, rerank_mult=4
+    )
+    assert docs
+    assert all("neural" in d.page_content for d in docs)
+
+
+def test_recall_knobs_with_structured_filter_raise(store: InfinoVectorStore) -> None:
+    with pytest.raises(ValueError, match="unsupported alongside"):
+        store.similarity_search("x", k=3, filter={"category": "ml"}, nprobe=8)
+
+
+# --- FTS analyzer selection ---
+
+
+def test_standard_analyzer_indexes_non_ascii_terms(tmp_path) -> None:
+    connection = infino.connect(str(tmp_path / "unicode-db"))
+    store = InfinoVectorStore.from_texts(
+        ["un café à Paris", "plain ascii text"],
+        DeterministicFakeEmbedding(size=EMBED_DIM),
+        connection=connection,
+        table_name="docs",
+        dim=EMBED_DIM,
+        analyzer="standard",
+    )
+    docs = store.as_bm25_retriever(k=2).invoke("café")
+    assert [d.page_content for d in docs] == ["un café à Paris"]
+
+
 # --- SQL-native escape hatch ---
 
 
