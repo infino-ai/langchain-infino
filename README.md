@@ -12,12 +12,20 @@ on object storage.**
 Most "vector database" LangChain integrations expose only the vector slice of
 their engine. Infino keeps your data in Apache Parquet on object storage and
 runs SQL, BM25, vector, and hybrid (RRF) retrieval over it from a single
-in-process engine — no separate search cluster or vector store to keep in
-sync. This package surfaces that whole retrieval surface, not just
-`similarity_search`.
+in-process engine. This package surfaces that whole retrieval surface, not
+just `similarity_search`.
 
-Infino never embeds: you bring a LangChain `Embeddings` object, and the
-integration supplies the vectors.
+**What you get**
+
+- **One store, four retrieval modes** — vector, BM25, hybrid (RRF), and raw
+  SQL over the same rows. Nothing to dual-write, no drift between a vector
+  index and a search cluster.
+- **Storage you already pay for** — Parquet on S3 or Azure Blob. No cluster to
+  size, patch, or keep warm; local disk in dev is the same code path.
+- **Drop-in for existing chains** — a standard `VectorStore` plus retrievers,
+  self-query, and a semantic LLM cache.
+- **Your embeddings, your choice** — Infino never embeds. Bring a LangChain
+  `Embeddings` object and the integration supplies the vectors.
 
 ## Installation
 
@@ -106,12 +114,15 @@ store = InfinoVectorStore.from_texts(
 )
 ```
 
-Pass `validate=True` to `connect` to probe the store at connect time so bad
-credentials fail there rather than on first read. `connection_memory_budget_bytes`
-caps what one connection may hold; an ingest or query that would exceed it
-raises `infino.ConnectionMemoryBudgetError` (a recoverable subclass of
-`infino.InfinoError`, the base for every engine failure) so you can narrow the
-query, split the ingest, or raise the budget.
+Two `connect` options worth setting in production:
+
+- `validate=True` probes the store at connect time, so bad credentials fail
+  there instead of on the first read.
+- `connection_memory_budget_bytes` caps what one connection may hold. An
+  ingest or query that would exceed it raises
+  `infino.ConnectionMemoryBudgetError` — recoverable, so you can narrow the
+  query, split the ingest, or raise the budget. It subclasses
+  `infino.InfinoError`, the base for every engine failure.
 
 For a hosted Infino target, pass `api_key=` and provision the database once:
 
@@ -200,8 +211,10 @@ re-embeds the `fetch_k` candidates' text to score them against each other.
 
 ## Hybrid (RRF) retrieval
 
-BM25 and vector search fused by reciprocal-rank fusion in a single SQL call —
-no separate reranking round-trip.
+The default choice when queries mix natural language with exact terms — error
+codes, SKUs, proper nouns — that pure vector search blurs away. BM25 and
+vector search are fused by reciprocal-rank fusion in a single call, with no
+separate reranking round-trip.
 
 ```python
 retriever = store.as_hybrid_retriever(k=4)
@@ -218,22 +231,24 @@ retriever = store.as_bm25_retriever(k=4, mode="and")  # require all terms
 retriever.invoke("gradient descent")
 ```
 
-By default each storage file scores against its own term statistics, so as a
-table fragments the same document's score drifts with which file it landed in.
-`stats="global"` scores against corpus-wide statistics instead — a fragmented
-table then ranks exactly like one unified index, for one extra
-document-frequency pass over the files holding the query's terms.
+A growing table splits across many storage files, and by default each file
+ranks against its own term statistics — so the same document can score
+differently depending on which file it landed in. `stats="global"` ranks
+against corpus-wide statistics instead, and a large table then behaves exactly
+like one unified index. It costs one extra document-frequency pass over the
+files holding your query's terms, so reach for it when ranking quality matters
+more than the last few milliseconds.
 
 ```python
 retriever = store.as_bm25_retriever(k=4, stats="global")
 ```
 
-## Text analysis
+## Language and tokenization
 
-The text column's FTS index is tokenized by `ascii_lower` — ASCII-folding and
-lowercasing — unless you pick another analyzer at table creation. Use
-`standard` (UAX #29 word segmentation with full Unicode lowercasing) to keep
-non-ASCII terms searchable.
+Out of the box the text index folds to lowercase ASCII — right for English,
+but it strips accents and drops non-Latin scripts. If your corpus isn't
+English, index it with the `standard` analyzer (UAX #29 word segmentation and
+full Unicode lowercasing) so terms like `café` stay searchable.
 
 ```python
 store = InfinoVectorStore.from_texts(
@@ -243,14 +258,17 @@ store = InfinoVectorStore.from_texts(
 )
 ```
 
-The id column always keeps the default so `get_by_ids` resolves ids verbatim.
+Pick it at table creation — changing the analyzer later means recreating the
+table. The id column always keeps the default so `get_by_ids` matches ids
+verbatim.
 
-## Recall tuning
+## Tuning recall vs. latency
 
-The vector index is IVF: a query probes some cells, then reranks the
-candidates against full-precision vectors. `nprobe` widens the probe, and
-`rerank_mult` deepens the candidate pool relative to `k` — both trade latency
-for recall, and both default to the engine's values.
+Vector search is approximate: a query probes part of the index, then reranks
+the survivors against full-precision vectors. If results you know are there
+aren't coming back, widen the search — `nprobe` probes more of the index and
+`rerank_mult` deepens the candidate pool relative to `k`. Both cost latency,
+and both default to the engine's tuning.
 
 ```python
 store.similarity_search("optimizers", k=10, nprobe=16, rerank_mult=4)
