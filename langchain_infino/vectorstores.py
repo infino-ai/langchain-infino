@@ -38,8 +38,6 @@ SearchMode = Literal["or", "and"]
 Bm25Stats = Literal["per_superfile", "global"]
 
 DEFAULT_K = 4
-# IVF builder clamps n_cent to <=64 below 100K rows; 64 is the effective max.
-DEFAULT_N_CENT = 64
 DEFAULT_METRIC: Metric = "cosine"
 DEFAULT_TEXT_COLUMN = "page_content"
 DEFAULT_VECTOR_COLUMN = "embedding"
@@ -524,7 +522,6 @@ class InfinoVectorStore(VectorStore):
         dim: int,
         ids: list[str] | None = None,
         metric: Metric = DEFAULT_METRIC,
-        n_cent: int = DEFAULT_N_CENT,
         analyzer: str | None = None,
         text_column: str = DEFAULT_TEXT_COLUMN,
         vector_column: str = DEFAULT_VECTOR_COLUMN,
@@ -545,7 +542,7 @@ class InfinoVectorStore(VectorStore):
             infino.IndexSpec()
             .fts(text_column, analyzer)
             .fts(id_column)
-            .vector(vector_column, dim, n_cent, metric)
+            .vector(vector_column, dim, metric)
         )
         table = connection.create_table(table_name, schema, indexes)
 
