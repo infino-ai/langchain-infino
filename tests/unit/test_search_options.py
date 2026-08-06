@@ -1,8 +1,9 @@
 """The store must hand every search option to the engine unchanged.
 
-The engine validates none of the tuning options — `nprobe=0` and
-`nprobe=10**9` both return the same rows — so a dropped keyword is invisible
-end-to-end. These tests pin the forwarding itself.
+A dropped keyword is invisible end-to-end (the engine returns rows either
+way), so these tests pin the forwarding itself. Vector serving carries no
+tuning knobs — probe width and rerank budget are engine-decided — so the
+forwarded surface is the filters and BM25 options plus the sentinel Nones.
 """
 
 from typing import Any
@@ -61,38 +62,25 @@ def _calls(store: InfinoVectorStore) -> dict[str, dict[str, Any]]:
     return store._table.calls  # type: ignore[union-attr]
 
 
-def test_recall_knobs_reach_vector_search(store: InfinoVectorStore) -> None:
-    store.similarity_search("q", k=7, nprobe=16, rerank_mult=4)
+def test_pushdown_prefilter_reaches_vector_search(store: InfinoVectorStore) -> None:
+    store.similarity_search("q", k=3, filter_query="billing")
     call = _calls(store)["vector_search"]
-    assert call["k"] == 7
-    assert call["nprobe"] == 16
-    assert call["rerank_mult"] == 4
-
-
-def test_recall_knobs_reach_the_pushdown_prefilter(store: InfinoVectorStore) -> None:
-    store.similarity_search("q", k=3, filter_query="billing", nprobe=8, rerank_mult=2)
-    call = _calls(store)["vector_search"]
-    assert call["nprobe"] == 8
-    assert call["rerank_mult"] == 2
+    assert call["k"] == 3
     # The pushdown defaults to the indexed text column.
     assert call["filter_query"] == "billing"
     assert call["filter_column"] == "page_content"
 
 
-def test_recall_knobs_reach_mmr_candidate_fetch(store: InfinoVectorStore) -> None:
-    store.max_marginal_relevance_search("q", k=2, fetch_k=9, nprobe=5, rerank_mult=3)
+def test_mmr_candidate_fetch_uses_fetch_k(store: InfinoVectorStore) -> None:
+    store.max_marginal_relevance_search("q", k=2, fetch_k=9)
     call = _calls(store)["vector_search"]
     assert call["k"] == 9
-    assert call["nprobe"] == 5
-    assert call["rerank_mult"] == 3
 
 
-def test_recall_knobs_reach_hybrid_search(store: InfinoVectorStore) -> None:
-    store.as_hybrid_retriever(k=6, nprobe=12, rerank_mult=2).invoke("q")
+def test_hybrid_search_forwards_k(store: InfinoVectorStore) -> None:
+    store.as_hybrid_retriever(k=6).invoke("q")
     call = _calls(store)["hybrid_search"]
     assert call["k"] == 6
-    assert call["nprobe"] == 12
-    assert call["rerank_mult"] == 2
 
 
 def test_bm25_stats_and_mode_reach_the_engine(store: InfinoVectorStore) -> None:
@@ -104,9 +92,10 @@ def test_bm25_stats_and_mode_reach_the_engine(store: InfinoVectorStore) -> None:
 
 
 def test_options_default_to_none_so_the_engine_picks(store: InfinoVectorStore) -> None:
-    # Omitted options must arrive as None, never as a client-side guess.
+    # Omitted options must arrive as None, never as a client-side guess —
+    # and the vector call must carry NO tuning kwargs at all.
     store.similarity_search("q", k=4)
     store.as_bm25_retriever(k=4).invoke("q")
     vector, bm25 = _calls(store)["vector_search"], _calls(store)["bm25_search"]
-    assert vector["nprobe"] is None and vector["rerank_mult"] is None
+    assert "nprobe" not in vector and "rerank_mult" not in vector
     assert bm25["mode"] is None and bm25["stats"] is None
