@@ -26,23 +26,19 @@ class InfinoHybridRetriever(BaseRetriever):
     """Retriever that fuses BM25 and vector search (RRF) per query.
 
     The fusion runs entirely in the engine via ``hybrid_search`` — no
-    separate reranking round-trip. ``nprobe`` and ``rerank_mult`` trade
-    latency for recall on the vector leg.
+    separate reranking round-trip. Vector-leg serving (probe width and
+    rerank budget) is engine-decided.
     """
 
     vectorstore: InfinoVectorStore
     k: int = DEFAULT_K
-    nprobe: Optional[int] = None
-    rerank_mult: Optional[int] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def _get_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun
     ) -> list[Document]:
-        return self.vectorstore._hybrid_search(
-            query, self.k, nprobe=self.nprobe, rerank_mult=self.rerank_mult
-        )
+        return self.vectorstore._hybrid_search(query, self.k)
 
 
 class InfinoBM25Retriever(BaseRetriever):

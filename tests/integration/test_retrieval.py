@@ -174,27 +174,14 @@ def test_bm25_global_stats_over_a_fragmented_table(tmp_path) -> None:
     assert all("alpha" in d.page_content for d in docs)
 
 
-# --- IVF recall knobs ---
+# --- vector serving is engine-decided: no tuning kwargs ---
 
 
-def test_recall_knobs_on_vector_and_hybrid(store: InfinoVectorStore) -> None:
-    docs = store.similarity_search("learning", k=3, nprobe=8, rerank_mult=4)
-    assert len(docs) == 3
-    hybrid = store.as_hybrid_retriever(k=3, nprobe=8, rerank_mult=4)
-    assert hybrid.invoke("neural network")
-
-
-def test_recall_knobs_survive_the_pushdown_prefilter(store: InfinoVectorStore) -> None:
-    docs = store.similarity_search(
-        "anything", k=5, filter_query="neural", nprobe=8, rerank_mult=4
-    )
-    assert docs
-    assert all("neural" in d.page_content for d in docs)
-
-
-def test_recall_knobs_with_structured_filter_raise(store: InfinoVectorStore) -> None:
-    with pytest.raises(ValueError, match="unsupported alongside"):
-        store.similarity_search("x", k=3, filter={"category": "ml"}, nprobe=8)
+def test_tuning_kwargs_are_rejected(store: InfinoVectorStore) -> None:
+    # The knobs were removed deliberately (engine-decided serving); a
+    # caller still passing one gets a loud TypeError, not silent ignore.
+    with pytest.raises(TypeError):
+        store.similarity_search("learning", k=3, nprobe=8)
 
 
 # --- FTS analyzer selection ---

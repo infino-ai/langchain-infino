@@ -8,6 +8,7 @@ filtered, MMR, and hybrid (RRF) retrieval all run over that one table.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Callable, Literal
 from uuid import uuid4
@@ -70,6 +71,41 @@ _RELEVANCE_FNS: dict[str, Callable[[float], float]] = {
     "l2sq": lambda d: 1.0 / (1.0 + max(0.0, d)),
     "l2": lambda d: 1.0 / (1.0 + max(0.0, d)),
 }
+
+
+
+# Vector tuning knobs removed with engine-decided serving (infino#546).
+# LangChain's `**kwargs` convention would swallow them silently; fail loud
+# with a migration hint instead.
+_REMOVED_KNOBS = ("nprobe", "rerank_mult")
+
+
+def _reject_removed_knobs(kwargs: Mapping[str, Any]) -> None:
+    for name in _REMOVED_KNOBS:
+        if name in kwargs:
+            raise TypeError(
+                f"`{name}` was removed: vector serving (probe width and "
+                "rerank budget) is engine-decided, calibrated per table at "
+                "optimize time; drop the argument"
+            )
+
+
+
+def _l2_normalize(vectors: list[list[float]]) -> list[list[float]]:
+    """Unit-normalize for the cosine metric.
+
+    The engine's cosine contract expects unit-ish inputs: the stored rerank
+    payload lives on a fixed [-1, 1] grid, so an unnormalized component
+    clamps and distorts served distances (an exact self-match measured
+    0.07 instead of ~0.0 with raw Gaussian embeddings). Cosine is
+    scale-invariant, so normalizing changes nothing semantically — it only
+    keeps every component on the representable grid.
+    """
+    out: list[list[float]] = []
+    for v in vectors:
+        norm = math.sqrt(sum(x * x for x in v))
+        out.append([x / norm for x in v] if norm > 0.0 else list(v))
+    return out
 
 
 class InfinoVectorStore(VectorStore):
@@ -166,6 +202,8 @@ class InfinoVectorStore(VectorStore):
             raise ValueError("metadatas and texts must have the same length")
 
         vectors = self._embedding.embed_documents(texts)
+        if self._metric == "cosine":
+            vectors = _l2_normalize(vectors)
         declared = set(self._metadata_column_names)
 
         # Order must match the schema: id, text, vector, *metadata, json.
@@ -202,10 +240,9 @@ class InfinoVectorStore(VectorStore):
         filter_query: str | None = None,
         filter_column: str | None = None,
         filter_mode: SearchMode | None = None,
-        nprobe: int | None = None,
-        rerank_mult: int | None = None,
         **kwargs: Any,
     ) -> list[Document]:
+        _reject_removed_knobs(kwargs)
         embedding = self._embedding.embed_query(query)
         return self.similarity_search_by_vector(
             embedding,
@@ -214,8 +251,6 @@ class InfinoVectorStore(VectorStore):
             filter_query=filter_query,
             filter_column=filter_column,
             filter_mode=filter_mode,
-            nprobe=nprobe,
-            rerank_mult=rerank_mult,
             **kwargs,
         )
 
@@ -228,10 +263,9 @@ class InfinoVectorStore(VectorStore):
         filter_query: str | None = None,
         filter_column: str | None = None,
         filter_mode: SearchMode | None = None,
-        nprobe: int | None = None,
-        rerank_mult: int | None = None,
         **kwargs: Any,
     ) -> list[Document]:
+        _reject_removed_knobs(kwargs)
         results = self._search(
             list(embedding),
             k,
@@ -239,8 +273,6 @@ class InfinoVectorStore(VectorStore):
             filter_query=filter_query,
             filter_column=filter_column,
             filter_mode=filter_mode,
-            nprobe=nprobe,
-            rerank_mult=rerank_mult,
         )
         return [doc for doc, _ in results]
 
@@ -253,10 +285,9 @@ class InfinoVectorStore(VectorStore):
         filter_query: str | None = None,
         filter_column: str | None = None,
         filter_mode: SearchMode | None = None,
-        nprobe: int | None = None,
-        rerank_mult: int | None = None,
         **kwargs: Any,
     ) -> list[tuple[Document, float]]:
+        _reject_removed_knobs(kwargs)
         embedding = self._embedding.embed_query(query)
         results = self._search(
             embedding,
@@ -265,8 +296,6 @@ class InfinoVectorStore(VectorStore):
             filter_query=filter_query,
             filter_column=filter_column,
             filter_mode=filter_mode,
-            nprobe=nprobe,
-            rerank_mult=rerank_mult,
         )
         return [(doc, score if score is not None else 0.0) for doc, score in results]
 
@@ -281,10 +310,9 @@ class InfinoVectorStore(VectorStore):
         filter_query: str | None = None,
         filter_column: str | None = None,
         filter_mode: SearchMode | None = None,
-        nprobe: int | None = None,
-        rerank_mult: int | None = None,
         **kwargs: Any,
     ) -> list[Document]:
+        _reject_removed_knobs(kwargs)
         # Stored vectors can't be read back (not projectable, no point-lookup),
         # so re-embed the candidate text for MMR's pairwise scoring.
         query_embedding = self._embedding.embed_query(query)
@@ -295,8 +323,6 @@ class InfinoVectorStore(VectorStore):
             filter_query=filter_query,
             filter_column=filter_column,
             filter_mode=filter_mode,
-            nprobe=nprobe,
-            rerank_mult=rerank_mult,
         )
         if not candidates:
             return []
@@ -370,22 +396,15 @@ class InfinoVectorStore(VectorStore):
         filter_query: str | None = None,
         filter_column: str | None = None,
         filter_mode: SearchMode | None = None,
-        nprobe: int | None = None,
-        rerank_mult: int | None = None,
     ) -> list[tuple[Document, float | None]]:
+        if self._metric == "cosine":
+            embedding = _l2_normalize([list(embedding)])[0]
         # Not composable in one engine call: `filter` is a post-rank SQL WHERE,
         # `filter_query` an FTS pre-filter the kNN honors before ranking.
         if filter and filter_query:
             raise ValueError(
                 "pass either `filter` (structured SQL predicate, post-rank) or "
                 "`filter_query` (text pushdown pre-filter), not both"
-            )
-        # The vector_search TVF takes only (table, column, query, k), so the
-        # SQL path has nowhere to carry the recall knobs.
-        if filter and (nprobe is not None or rerank_mult is not None):
-            raise ValueError(
-                "`nprobe` / `rerank_mult` are unsupported alongside `filter`; "
-                "use `filter_query` or search_by_sql for that combination"
             )
         projection = self._projection()
         if filter:
@@ -406,8 +425,6 @@ class InfinoVectorStore(VectorStore):
                 self._vector_column,
                 list(embedding),
                 k,
-                nprobe=nprobe,
-                rerank_mult=rerank_mult,
                 filter_column=filter_column or self._text_column,
                 filter_query=filter_query,
                 filter_mode=filter_mode,
@@ -418,8 +435,6 @@ class InfinoVectorStore(VectorStore):
                 self._vector_column,
                 list(embedding),
                 k,
-                nprobe=nprobe,
-                rerank_mult=rerank_mult,
                 projection=projection,
             )
         return rows_to_documents(
@@ -438,19 +453,17 @@ class InfinoVectorStore(VectorStore):
         self,
         query: str,
         k: int = DEFAULT_K,
-        *,
-        nprobe: int | None = None,
-        rerank_mult: int | None = None,
     ) -> list[Document]:
         """BM25 + vector retrieval fused by RRF in one engine call."""
+        query_vector = self._embedding.embed_query(query)
+        if self._metric == "cosine":
+            query_vector = _l2_normalize([query_vector])[0]
         result = self._table.hybrid_search(
             self._text_column,
             query,
             self._vector_column,
-            self._embedding.embed_query(query),
+            query_vector,
             k,
-            nprobe=nprobe,
-            rerank_mult=rerank_mult,
             projection=self._projection(),
         )
         return self._to_documents(result)
@@ -487,15 +500,12 @@ class InfinoVectorStore(VectorStore):
     def as_hybrid_retriever(
         self,
         k: int = DEFAULT_K,
-        *,
-        nprobe: int | None = None,
-        rerank_mult: int | None = None,
     ) -> InfinoHybridRetriever:
         """A retriever that fuses BM25 and vector search (RRF) per query."""
         from langchain_infino.retrievers import InfinoHybridRetriever
 
         return InfinoHybridRetriever(
-            vectorstore=self, k=k, nprobe=nprobe, rerank_mult=rerank_mult
+            vectorstore=self, k=k
         )
 
     def as_bm25_retriever(
