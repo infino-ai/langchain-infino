@@ -387,12 +387,46 @@ class InfinoVectorStore(VectorStore):
         )
         return [candidates[i][0] for i in selected]
 
-    def delete(self, ids: list[str] | None = None, **kwargs: Any) -> bool | None:
-        if not ids:
+    def delete(
+        self,
+        ids: list[str] | None = None,
+        *,
+        filter: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> bool | None:
+        """Delete documents by id, by metadata filter, or all of them.
+
+        Per the ``VectorStore`` contract, ``ids=None`` deletes everything in
+        the table; pass an empty list to delete nothing. ``filter`` takes the
+        same structured form as the search methods and deletes what matches.
+
+        Returns True whenever the delete was issued, including when it matched
+        nothing — an idempotent delete of absent ids has still succeeded. Use
+        :meth:`delete_by_predicate` when you need the counts.
+        """
+        if ids is not None and filter is not None:
+            raise ValueError("pass either `ids` or `filter`, not both")
+        if filter is not None:
+            predicate = _compile_filter(filter, self._metadata_column_names)
+        elif ids is None:
+            # The contract's "delete all"; a tautology matches every row.
+            predicate = "1 = 1"
+        elif not ids:
             return False
-        id_list = ", ".join(sql_lit(i) for i in ids)
-        self._table.delete(f"{self._id_column} IN ({id_list})")
+        else:
+            predicate = (
+                f"{self._id_column} IN ({', '.join(sql_lit(i) for i in ids)})"
+            )
+        self._table.delete(predicate)
         return True
+
+    def delete_by_predicate(self, predicate: str) -> infino.MutationStats:
+        """Delete rows matching a raw SQL ``predicate``, returning the counts.
+
+        The escape hatch behind :meth:`delete` for predicates the structured
+        filter cannot express, and the way to see how much was removed.
+        """
+        return self._table.delete(predicate)
 
     def get_by_ids(self, ids: Sequence[str], /) -> list[Document]:
         """Fetch documents by ``doc_id`` via ``exact_match`` (the only pre-I/O

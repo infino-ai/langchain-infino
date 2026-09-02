@@ -76,6 +76,24 @@ jobs:
       - run: pip install "$(ls dist/*.whl)" pytest pytest-asyncio
       - run: pytest tests/smoke -q
 
+  # Grade the declared langchain-core floor. `langchain-core>=0.3` is left
+  # uncapped so the scheduled run keeps testing the newest release, which is
+  # only safe if the bottom of the range is exercised too — otherwise the floor
+  # is a claim nothing checks.
+  langchain-core-floor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - run: pip install -e ".[test,lint]"
+      - name: Pin langchain-core to the declared floor
+        run: pip install "langchain-core~=0.3.0" "langchain-tests~=0.3.0"
+      - name: Report the versions under test
+        run: python -c "import langchain_core; print('langchain-core', langchain_core.__version__)"
+      - run: pytest tests/unit tests/integration -q
+
   # Run the suites against the newest published engine, ignoring our own upper
   # bound. The cap otherwise pins CI to a stale version and hides every engine
   # release behind a green build; `--no-deps` bypasses it without dragging the

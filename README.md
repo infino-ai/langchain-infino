@@ -173,7 +173,19 @@ store.add_texts(["v2 of the note"], ids=["doc-1"])
 # Fetch by id (skips missing, order not guaranteed); delete by id.
 store.get_by_ids(["doc-1"])
 store.delete(["doc-1"])
+
+# Delete what a filter matches, or — per the VectorStore contract — pass no
+# ids to empty the table. An empty list deletes nothing.
+store.delete(filter={"source": "inbox"})
+store.delete()
+
+# When you need the counts, or a predicate the filter can't express.
+stats = store.delete_by_predicate("source = 'inbox' AND year < 2020")
+stats.matched, stats.n_tombstoned
 ```
+
+`delete` returns True whenever the delete was issued, including when it matched
+nothing — deleting ids that aren't there has still succeeded.
 
 ## Similarity search
 
@@ -437,7 +449,9 @@ The async methods (`aadd_texts`, `asimilarity_search`, …) are inherited from
   - `similarity_search(query, k=4, filter=None, *, filter_query=None, filter_column=None, filter_mode=None) -> list[Document]`
   - `similarity_search_with_score(...)`, `similarity_search_by_vector(...)`
   - `max_marginal_relevance_search(query, k=4, fetch_k=20, lambda_mult=0.5, filter=None, ...)`
-  - `delete(ids) -> bool`, `get_by_ids(ids) -> list[Document]`
+  - `delete(ids=None, *, filter=None) -> bool` — by id, by filter, or all of
+    them when `ids` is `None`; `get_by_ids(ids) -> list[Document]`
+  - `delete_by_predicate(predicate) -> MutationStats` — raw SQL, with counts
   - `token_search(query, *, column=None, mode=None) -> list[Document]` — unranked term match, no `k`.
   - `exact_search(value, column) -> list[Document]` — verbatim key lookup.
   - `count(query, *, column=None, mode=None) -> int` — counts in the engine.

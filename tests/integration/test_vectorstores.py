@@ -68,7 +68,6 @@ def test_delete_removes_rows(store: InfinoVectorStore) -> None:
 
 def test_delete_empty_is_noop(store: InfinoVectorStore) -> None:
     assert store.delete([]) is False
-    assert store.delete(None) is False
 
 
 def test_add_texts_rejects_mismatched_ids(store: InfinoVectorStore) -> None:

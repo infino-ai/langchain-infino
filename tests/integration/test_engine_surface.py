@@ -282,3 +282,38 @@ def test_declaring_a_reserved_column_name_fails_at_creation(tmp_path) -> None:
             connection=infino.connect(str(tmp_path / "db")),
             metadata_columns=[pa.field("score", pa.float64(), nullable=True)],
         )
+
+
+def test_delete_with_no_ids_empties_the_table(store) -> None:
+    # The VectorStore contract: `ids=None` means delete everything.
+    assert store.delete() is True
+    assert store.similarity_search("search", k=3) == []
+
+
+def test_delete_with_an_empty_list_deletes_nothing(store) -> None:
+    # An empty list is not the same as None.
+    assert store.delete([]) is False
+    assert len(store.similarity_search("search", k=3)) == len(DOCS)
+
+
+def test_delete_by_filter_removes_only_the_matches(store) -> None:
+    assert store.delete(filter={"topic": "fusion"}) is True
+    remaining = store.token_search("search")
+    assert {d.metadata["topic"] for d in remaining} == {"search"}
+
+
+def test_delete_rejects_ids_and_filter_together(store) -> None:
+    with pytest.raises(ValueError, match="not both"):
+        store.delete(["x"], filter={"topic": "fusion"})
+
+
+def test_delete_by_predicate_reports_what_it_removed(store) -> None:
+    stats = store.delete_by_predicate("topic = 'search'")
+    assert stats.matched == 2
+    assert stats.n_tombstoned == 2
+    assert len(store.token_search("search")) == 0
+
+
+def test_deleting_absent_ids_still_reports_success(store) -> None:
+    # Idempotent: nothing matched, but the delete did not fail.
+    assert store.delete(["no-such-id"]) is True
