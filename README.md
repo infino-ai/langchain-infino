@@ -191,6 +191,12 @@ Promote the keys you want to filter on to real columns, then pass the
 LangChain operator form. Supports equality, `$eq` / `$ne` / `$gt` / `$gte` /
 `$lt` / `$lte`, `$in` / `$nin`, and `$and` / `$or` / `$not`.
 
+Filterable keys are declared at table creation. Undeclared metadata still
+round-trips through the JSON catch-all, but filtering on it raises rather than
+scanning — the engine cannot index into serialized JSON — and adding a
+filterable key later means recreating the table. Declare up front what you
+intend to filter on.
+
 ```python
 import pyarrow as pa
 
@@ -260,6 +266,7 @@ Pure lexical ranking over the FTS-indexed text column.
 retriever = store.as_bm25_retriever(k=4)              # OR by default
 retriever = store.as_bm25_retriever(k=4, mode="and")  # require all terms
 retriever.invoke("gradient descent")
+retriever.invoke("gradient descent", k=10)            # override per call
 ```
 
 A growing table splits across many storage files, and by default each file
