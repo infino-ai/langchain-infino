@@ -75,3 +75,22 @@ jobs:
         run: pip install "infino==${{ inputs.infino_version }}"
       - run: pip install "$(ls dist/*.whl)" pytest pytest-asyncio
       - run: pytest tests/smoke -q
+
+  # Run the suites against the newest published engine, ignoring our own upper
+  # bound. The cap otherwise pins CI to a stale version and hides every engine
+  # release behind a green build; `--no-deps` bypasses it without dragging the
+  # other dependencies forward. Red here means the engine moved.
+  engine-latest:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[test,lint]"
+      - name: Upgrade to the newest published engine
+        run: pip install --upgrade --no-deps infino
+      - name: Report the engine version under test
+        run: python -c "import infino; print('infino', infino.__version__)"
+      - run: pytest tests/unit tests/integration -q

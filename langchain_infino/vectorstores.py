@@ -37,6 +37,11 @@ if TYPE_CHECKING:
 Metric = Literal["cosine", "l2sq", "l2", "negdot", "dot"]
 SearchMode = Literal["or", "and"]
 Bm25Stats = Literal["per_superfile", "global"]
+ColdFetchMode = Literal[
+    "hybrid_with_prefetch",
+    "range_only",
+    "lazy_foreground_with_background_fill",
+]
 
 DEFAULT_K = 4
 DEFAULT_METRIC: Metric = "cosine"
@@ -159,13 +164,32 @@ class InfinoVectorStore(VectorStore):
         self._id_column = id_column
         self._metadata_columns = list(metadata_columns)
         self._metadata_column_names = [f.name for f in self._metadata_columns]
-        # open_table only succeeds once a table holds data (its manifest lands
-        # on first commit); from_texts passes the create_table handle directly.
+        # `table` is the handle from a just-created table, passed straight
+        # through to save a redundant open; without one, open the named table.
         self._table = table if table is not None else connection.open_table(table_name)
 
     @property
     def embeddings(self) -> Embeddings:
         return self._embedding
+
+    @property
+    def connection(self) -> infino.Connection:
+        """The underlying connection — for engine calls this class doesn't wrap
+        (``list_tables``, ``create_database``, cross-table SQL)."""
+        return self._connection
+
+    @property
+    def table(self) -> infino.Table:
+        """The underlying table — for engine calls this class doesn't wrap."""
+        return self._table
+
+    @property
+    def table_name(self) -> str:
+        return self._table_name
+
+    @property
+    def metric(self) -> Metric:
+        return self._metric
 
     def add_texts(
         self,
@@ -351,12 +375,7 @@ class InfinoVectorStore(VectorStore):
         Missing ids are skipped and duplicates collapse; order is not
         guaranteed, per the ``VectorStore`` contract.
         """
-        projection = [
-            self._id_column,
-            self._text_column,
-            *self._metadata_column_names,
-            METADATA_JSON_COLUMN,
-        ]
+        projection = self._projection(score=False)
         found: dict[str, Document] = {}
         for id_ in ids:
             result = self._table.exact_match(
@@ -378,14 +397,21 @@ class InfinoVectorStore(VectorStore):
                 f"use similarity_search_with_score for the raw distance"
             ) from None
 
-    def _projection(self) -> list[str]:
-        return [
+    def _projection(self, *, score: bool = True) -> list[str]:
+        """Document columns to project.
+
+        Only the ranking searches append ``score``; projecting it from
+        ``exact_match`` / ``token_match`` is an unknown-column error.
+        """
+        columns = [
             self._id_column,
             self._text_column,
             *self._metadata_column_names,
             METADATA_JSON_COLUMN,
-            SCORE_COLUMN,
         ]
+        if score:
+            columns.append(SCORE_COLUMN)
+        return columns
 
     def _search(
         self,
@@ -487,6 +513,100 @@ class InfinoVectorStore(VectorStore):
         )
         return self._to_documents(result)
 
+    def token_search(
+        self,
+        query: str,
+        *,
+        column: str | None = None,
+        mode: SearchMode | None = None,
+    ) -> list[Document]:
+        """Every document whose ``column`` matches ``query``'s terms.
+
+        Set membership, not relevance — hence no ``k`` and no score. Matches
+        against the text column unless told otherwise. For ranked top-k, use
+        :meth:`as_bm25_retriever`.
+        """
+        result = self._table.token_match(
+            column or self._text_column,
+            query,
+            mode=mode,
+            projection=self._projection(score=False),
+        )
+        return self._to_documents(result)
+
+    def exact_search(self, value: str, column: str) -> list[Document]:
+        """Documents whose ``column`` equals ``value`` verbatim.
+
+        No tokenization, no ranking. ``column`` must be FTS-indexed — the
+        store indexes the id and text columns, nothing else.
+        """
+        result = self._table.exact_match(
+            column, value, projection=self._projection(score=False)
+        )
+        return self._to_documents(result)
+
+    def count(
+        self,
+        query: str,
+        *,
+        column: str | None = None,
+        mode: SearchMode | None = None,
+    ) -> int:
+        """How many documents match ``query``, without materializing rows.
+
+        Counted in the engine, so it stays cheap on a table larger than
+        memory. This counts term matches; for a whole-table count run
+        ``SELECT COUNT(*)`` through :attr:`connection`.
+        """
+        return self._table.count(column or self._text_column, query, mode=mode)
+
+    def optimize(
+        self,
+        *,
+        max_memory_mb: int | None = None,
+        min_fill_percent: int | None = None,
+        target_superfile_size_mb: int | None = None,
+        stale_seal_timeout_ms: int | None = None,
+    ) -> None:
+        """Compact the table and recalibrate its vector serving.
+
+        Appends land as small immutable superfiles; this merges them, and is
+        also where the engine calibrates vector serving for the table's
+        current size. Search works without it, but recall and latency both
+        improve once it has run.
+
+        The arguments bound the work; omit them for the engine's defaults.
+        """
+        settings = None
+        if any(
+            v is not None
+            for v in (
+                max_memory_mb,
+                min_fill_percent,
+                target_superfile_size_mb,
+                stale_seal_timeout_ms,
+            )
+        ):
+            settings = infino.OptimizeOptions(
+                max_memory_mb=max_memory_mb,
+                min_fill_percent=min_fill_percent,
+                target_superfile_size_mb=target_superfile_size_mb,
+                stale_seal_timeout_ms=stale_seal_timeout_ms,
+            )
+        self._table.optimize(settings)
+
+    def gc(self, grace_secs: float) -> infino.GcReport:
+        """Delete storage objects no live snapshot references.
+
+        ``grace_secs`` spares anything younger, so readers still on an older
+        snapshot are not pulled out from under.
+        """
+        return self._table.gc(grace_secs)
+
+    def schema(self) -> pa.Schema:
+        """The table's declared Arrow schema."""
+        return self._table.schema()
+
     def search_by_sql(self, sql: str) -> list[Document]:
         """Run arbitrary SQL over the engine and map the rows to documents.
 
@@ -521,6 +641,166 @@ class InfinoVectorStore(VectorStore):
         return InfinoBM25Retriever(vectorstore=self, k=k, mode=mode, stats=stats)
 
     @classmethod
+    def open_or_create(
+        cls,
+        connection: infino.Connection,
+        table_name: str,
+        embedding: Embeddings,
+        *,
+        dim: int,
+        metric: Metric = DEFAULT_METRIC,
+        analyzer: str | None = None,
+        text_column: str = DEFAULT_TEXT_COLUMN,
+        vector_column: str = DEFAULT_VECTOR_COLUMN,
+        id_column: str = DEFAULT_ID_COLUMN,
+        metadata_columns: Sequence[pa.Field] = (),
+    ) -> InfinoVectorStore:
+        """Open ``table_name``, creating it first if it isn't there.
+
+        Idempotent, unlike the plain constructor (which requires the table)
+        and :meth:`from_texts` (which requires its absence).
+
+        The creation arguments — ``metric``, ``analyzer``,
+        ``metadata_columns`` — apply only when this call does the creating; an
+        existing table keeps the schema it was made with, and a mismatch
+        surfaces on the first write.
+        """
+        table: infino.Table | None = None
+        if table_name not in connection.list_tables():
+            try:
+                table = _create_table(
+                    connection,
+                    table_name,
+                    dim=dim,
+                    metric=metric,
+                    analyzer=analyzer,
+                    text_column=text_column,
+                    vector_column=vector_column,
+                    id_column=id_column,
+                    metadata_columns=metadata_columns,
+                )
+            except ValueError:
+                # Lost the race to a concurrent creator: use their table. Any
+                # other rejection (an out-of-range `dim`, say) still raises.
+                if table_name not in connection.list_tables():
+                    raise
+        return cls(
+            connection,
+            table_name,
+            embedding,
+            dim=dim,
+            metric=metric,
+            text_column=text_column,
+            vector_column=vector_column,
+            id_column=id_column,
+            metadata_columns=metadata_columns,
+            table=table,
+        )
+
+    @classmethod
+    def connect(
+        cls,
+        uri: str,
+        embedding: Embeddings,
+        table_name: str,
+        *,
+        dim: int,
+        create: bool = False,
+        create_database: bool = False,
+        # Connection configuration, mirroring the engine's own `connect`.
+        storage_options: Mapping[str, str] | None = None,
+        cache_dir: str | None = None,
+        cache_budget_bytes: int | None = None,
+        connection_memory_budget_bytes: int | None = None,
+        cold_fetch_mode: ColdFetchMode | None = None,
+        validate: bool | None = None,
+        api_key: str | None = None,
+        # Store configuration, as on `from_texts`.
+        metric: Metric = DEFAULT_METRIC,
+        analyzer: str | None = None,
+        text_column: str = DEFAULT_TEXT_COLUMN,
+        vector_column: str = DEFAULT_VECTOR_COLUMN,
+        id_column: str = DEFAULT_ID_COLUMN,
+        metadata_columns: Sequence[pa.Field] = (),
+    ) -> InfinoVectorStore:
+        """Open a store straight from a URI, without building a connection first.
+
+        One call from a storage location to a usable store — a local
+        directory, cloud object storage, or a hosted Infino target:
+
+        .. code-block:: python
+
+            # local directory
+            InfinoVectorStore.connect("./data", emb, "docs", dim=768)
+
+            # object storage
+            InfinoVectorStore.connect(
+                "s3://bucket/prefix", emb, "docs", dim=768,
+                storage_options={"aws_region": "us-east-1"},
+            )
+
+            # hosted
+            InfinoVectorStore.connect(
+                "https://...", emb, "docs", dim=768, api_key="...",
+            )
+
+        ``create`` ensures the table exists — created when absent, opened
+        when present — so it is safe on every run; left false, the table must
+        already exist. ``create_database`` provisions the database first,
+        which a hosted target needs once.
+
+        The connection options are the engine's own, forwarded unchanged;
+        only those explicitly set are sent, so the rest keep engine defaults.
+        ``storage_options`` carries backend credentials and settings, and
+        ambient credentials need none. The remaining arguments configure the
+        table as on :meth:`open_or_create`.
+        """
+        options: dict[str, Any] = {}
+        if storage_options is not None:
+            options["storage_options"] = dict(storage_options)
+        if cache_dir is not None:
+            options["cache_dir"] = cache_dir
+        if cache_budget_bytes is not None:
+            options["cache_budget_bytes"] = cache_budget_bytes
+        if connection_memory_budget_bytes is not None:
+            options["connection_memory_budget_bytes"] = connection_memory_budget_bytes
+        if cold_fetch_mode is not None:
+            options["cold_fetch_mode"] = cold_fetch_mode
+        if validate is not None:
+            options["validate"] = validate
+        if api_key is not None:
+            options["api_key"] = api_key
+        connection = infino.connect(uri, **options)
+
+        if create_database:
+            connection.create_database()
+
+        if create:
+            return cls.open_or_create(
+                connection,
+                table_name,
+                embedding,
+                dim=dim,
+                metric=metric,
+                analyzer=analyzer,
+                text_column=text_column,
+                vector_column=vector_column,
+                id_column=id_column,
+                metadata_columns=metadata_columns,
+            )
+        return cls(
+            connection,
+            table_name,
+            embedding,
+            dim=dim,
+            metric=metric,
+            text_column=text_column,
+            vector_column=vector_column,
+            id_column=id_column,
+            metadata_columns=metadata_columns,
+        )
+
+    @classmethod
     def from_texts(  # type: ignore[override]  # requires engine params (connection, table_name, dim) the base signature lacks
         cls,
         texts: list[str],
@@ -545,16 +825,17 @@ class InfinoVectorStore(VectorStore):
         default when omitted); the id column always keeps the default so
         ``exact_match`` resolves ids verbatim.
         """
-        schema = _build_schema(
-            dim, text_column, vector_column, id_column, metadata_columns
+        table = _create_table(
+            connection,
+            table_name,
+            dim=dim,
+            metric=metric,
+            analyzer=analyzer,
+            text_column=text_column,
+            vector_column=vector_column,
+            id_column=id_column,
+            metadata_columns=metadata_columns,
         )
-        indexes = (
-            infino.IndexSpec()
-            .fts(text_column, analyzer)
-            .fts(id_column)
-            .vector(vector_column, dim, metric)
-        )
-        table = connection.create_table(table_name, schema, indexes)
 
         store = cls(
             connection,
@@ -570,6 +851,33 @@ class InfinoVectorStore(VectorStore):
         )
         store.add_texts(texts, metadatas, ids=ids)
         return store
+
+
+def _create_table(
+    connection: infino.Connection,
+    table_name: str,
+    *,
+    dim: int,
+    metric: Metric,
+    analyzer: str | None,
+    text_column: str,
+    vector_column: str,
+    id_column: str,
+    metadata_columns: Sequence[pa.Field],
+) -> infino.Table:
+    """Create the table with its schema and indexes.
+
+    The id column keeps the default analyzer so ``exact_match`` resolves ids
+    verbatim, whatever ``analyzer`` the text column gets.
+    """
+    return connection.create_table(
+        table_name,
+        _build_schema(dim, text_column, vector_column, id_column, metadata_columns),
+        infino.IndexSpec()
+        .fts(text_column, analyzer)
+        .fts(id_column)
+        .vector(vector_column, dim, metric),
+    )
 
 
 def _build_schema(

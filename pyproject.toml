@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "langchain-infino"
-version = "0.2.0"
+version = "0.3.0"
 description = "LangChain integration for Infino — vector, BM25, and hybrid retrieval over one engine on object storage."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -33,7 +33,7 @@ classifiers = [
 ]
 dependencies = [
     "langchain-core>=0.3",
-    "infino>=0.3.0,<0.4",
+    "infino>=0.5.7,<0.6",
     "pyarrow>=14",
     "numpy>=1.26",
 ]
