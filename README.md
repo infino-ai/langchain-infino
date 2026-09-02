@@ -52,14 +52,13 @@ from langchain_openai import OpenAIEmbeddings
 
 # A local path or an S3 URI for durable storage; "memory://" is ephemeral.
 connection = infino.connect("./data")
-embedding = OpenAIEmbeddings()  # dim must match the table; 1536 here
+embedding = OpenAIEmbeddings()
 
 store = InfinoVectorStore.from_texts(
     ["Infino runs search on object storage.", "One engine for SQL, BM25, and vectors."],
     embedding,
     connection=connection,
     table_name="docs",
-    dim=1536,
 )
 
 docs = store.similarity_search("search on S3", k=2)
@@ -114,21 +113,52 @@ store = InfinoVectorStore.from_texts(
 )
 ```
 
+`InfinoVectorStore.connect` collapses that into one call when you don't need
+the connection for anything else. It takes the same connection options and
+reaches a local directory, object storage, or a hosted target the same way:
+
+```python
+store = InfinoVectorStore.connect(
+    "s3://bucket/prefix", embedding, "docs", dim=1536,
+    storage_options={"aws_region": "us-east-1"},
+)
+```
+
+It opens an existing table by default; pass `create=True` to ensure the table
+exists — created when absent, opened when present, so it is safe on every run
+— and `create_database=True` to provision the database first.
+
+The constructors differ only in what they expect of the table:
+`InfinoVectorStore(...)` requires it to exist, `from_texts(...)` requires that
+it does not, and `open_or_create(...)` accepts either. Reach for the last when
+a process attaches to its own table across restarts.
+
 Two `connect` options worth setting in production:
 
 - `validate=True` probes the store at connect time, so bad credentials fail
   there instead of on the first read.
 - `connection_memory_budget_bytes` caps what one connection may hold. An
   ingest or query that would exceed it raises
-  `infino.ConnectionMemoryBudgetError` — recoverable, so you can narrow the
-  query, split the ingest, or raise the budget. It subclasses
-  `infino.InfinoError`, the base for every engine failure.
+  `ConnectionMemoryBudgetError` — recoverable, so you can narrow the query,
+  split the ingest, or raise the budget. It subclasses `InfinoError`, the base
+  for every engine failure. Both are re-exported from `langchain_infino`,
+  alongside `ConflictError` for a lost commit race, so handling engine
+  failures needs no second import.
 
 For a hosted Infino target, pass `api_key=` and provision the database once:
 
 ```python
 connection = infino.connect("https://...", api_key="...")
 connection.create_database()  # no-op against a local or object-store URI
+```
+
+Or in one call:
+
+```python
+store = InfinoVectorStore.connect(
+    "https://...", embedding, "docs", dim=1536,
+    api_key="...", create_database=True, create=True,
+)
 ```
 
 ## Adding and managing documents
@@ -143,7 +173,19 @@ store.add_texts(["v2 of the note"], ids=["doc-1"])
 # Fetch by id (skips missing, order not guaranteed); delete by id.
 store.get_by_ids(["doc-1"])
 store.delete(["doc-1"])
+
+# Delete what a filter matches, or — per the VectorStore contract — pass no
+# ids to empty the table. An empty list deletes nothing.
+store.delete(filter={"source": "inbox"})
+store.delete()
+
+# When you need the counts, or a predicate the filter can't express.
+stats = store.delete_by_predicate("source = 'inbox' AND year < 2020")
+stats.matched, stats.n_tombstoned
 ```
+
+`delete` returns True whenever the delete was issued, including when it matched
+nothing — deleting ids that aren't there has still succeeded.
 
 ## Similarity search
 
@@ -156,20 +198,15 @@ store.similarity_search_by_vector(query_vector, k=4)              # query_vector
 
 ## Metadata filtering
 
-Promote the keys you want to filter on to real columns, then pass the
-LangChain operator form. Supports equality, `$eq` / `$ne` / `$gt` / `$gte` /
-`$lt` / `$lte`, `$in` / `$nin`, and `$and` / `$or` / `$not`.
+Scalar metadata is filterable out of the box — `from_texts` promotes the keys
+it finds in `metadatas` to real columns. Pass the LangChain operator form:
+equality, `$eq` / `$ne` / `$gt` / `$gte` / `$lt` / `$lte`, `$in` / `$nin`, and
+`$and` / `$or` / `$not`.
 
 ```python
-import pyarrow as pa
-
 store = InfinoVectorStore.from_texts(
     texts, embedding,
-    connection=connection, table_name="papers", dim=1536,
-    metadata_columns=[
-        pa.field("category", pa.large_utf8(), nullable=False),
-        pa.field("year", pa.int64(), nullable=False),
-    ],
+    connection=connection, table_name="papers",
     metadatas=[{"category": "ml", "year": 2024} for _ in texts],
 )
 
@@ -178,6 +215,33 @@ store.similarity_search("optimizers", k=4, filter={"year": {"$gte": 2023}})
 store.similarity_search("optimizers", k=4,
                         filter={"$or": [{"category": "ml"}, {"year": {"$lt": 2000}}]})
 ```
+
+A key is promoted only if every value it carries is a scalar of one consistent
+type. Anything nested, mixed-typed, or named like a column the engine reserves
+(`score`, `_id`, `_metadata_json`) stays in the JSON catch-all: it round-trips
+with the document, but filtering on it raises rather than scanning, because the
+engine has no index into serialized JSON.
+
+Promotion happens once, at table creation, from the metadata present then — so
+declare columns explicitly if later documents will introduce keys you intend to
+filter on, or if you want a specific type or non-null constraint:
+
+```python
+import pyarrow as pa
+
+store = InfinoVectorStore.from_texts(
+    texts, embedding,
+    connection=connection, table_name="papers",
+    metadata_columns=[
+        pa.field("category", pa.large_utf8(), nullable=False),
+        pa.field("year", pa.int64(), nullable=True),
+    ],
+    metadatas=[{"category": "ml", "year": 2024} for _ in texts],
+)
+```
+
+Opening an existing table needs neither `metadata_columns` nor `dim` — both are
+read back from the table's own schema.
 
 ## Text-pushdown pre-filter
 
@@ -229,6 +293,7 @@ Pure lexical ranking over the FTS-indexed text column.
 retriever = store.as_bm25_retriever(k=4)              # OR by default
 retriever = store.as_bm25_retriever(k=4, mode="and")  # require all terms
 retriever.invoke("gradient descent")
+retriever.invoke("gradient descent", k=10)            # override per call
 ```
 
 A growing table splits across many storage files, and by default each file
@@ -241,6 +306,32 @@ more than the last few milliseconds.
 
 ```python
 retriever = store.as_bm25_retriever(k=4, stats="global")
+```
+
+## Term matching and counting
+
+BM25 ranks and truncates to `k`. When you want the whole matching set rather
+than the best few — a filter, an export, an audit — `token_search` matches
+terms without ranking, so it takes no `k`:
+
+```python
+store.token_search("gradient descent")               # any term
+store.token_search("gradient descent", mode="and")   # both terms
+```
+
+`exact_search` looks a value up verbatim, with no tokenization at all. It
+needs an FTS-indexed column; the store indexes the id and text columns:
+
+```python
+store.exact_search("doc-1", "doc_id")
+```
+
+`count` answers how many documents match without materializing any of them,
+so it stays cheap on a table far larger than memory:
+
+```python
+store.count("gradient descent")
+store.count("gradient descent", mode="and")
 ```
 
 ## Language and tokenization
@@ -262,22 +353,30 @@ Pick it at table creation — changing the analyzer later means recreating the
 table. The id column always keeps the default so `get_by_ids` matches ids
 verbatim.
 
-## Tuning recall vs. latency
+## Recall and maintenance
 
 Vector search is approximate: a query probes part of the index, then reranks
-the survivors against full-precision vectors. If results you know are there
-aren't coming back, widen the search — `nprobe` probes more of the index and
-`rerank_mult` deepens the candidate pool relative to `k`. Both cost latency,
-and both default to the engine's tuning.
+the survivors against full-precision vectors. How widely it probes and how
+deep it reranks are engine-decided — calibrated per table from its size and
+distribution, with no knobs to set per query.
+
+Calibration happens during `optimize`, which is also what compacts the small
+immutable files each append leaves behind. Search works without it, but recall
+and latency both improve once it has run, so run it after a bulk load and
+periodically under steady ingest:
 
 ```python
-store.similarity_search("optimizers", k=10, nprobe=16, rerank_mult=4)
-store.as_hybrid_retriever(k=10, nprobe=16, rerank_mult=4)
+store.optimize()
 ```
 
-They apply to the vector and hybrid paths, including the text-pushdown
-pre-filter. The structured `filter` path ranks through the `vector_search`
-table function, which has no slot for them, so combining the two raises.
+Compaction leaves the pre-merge files unreferenced. `gc` reclaims them, and
+its grace period spares anything younger so in-flight readers on an older
+snapshot are not pulled out from under:
+
+```python
+report = store.gc(grace_secs=3600)
+report.bytes_freed, report.objects_deleted
+```
 
 ## Self-query
 
@@ -338,24 +437,44 @@ The async methods (`aadd_texts`, `asimilarity_search`, …) are inherited from
 
 ## API reference
 
-- `InfinoVectorStore(connection, table_name, embedding, *, dim, metric="cosine", text_column="page_content", vector_column="embedding", id_column="doc_id", metadata_columns=())`
+- `InfinoVectorStore(connection, table_name, embedding, *, dim=None, metric="cosine", text_column="page_content", vector_column="embedding", id_column="doc_id", metadata_columns=None)`
   — opens an existing table.
-  - `from_texts(texts, embedding, metadatas=None, *, connection, table_name, dim, ids=None, metric="cosine", n_cent=64, analyzer=None, text_column=..., vector_column=..., id_column=..., metadata_columns=()) -> InfinoVectorStore`
+  - `connect(uri, embedding, table_name, *, dim=None, create=False, create_database=False, storage_options=None, cache_dir=None, cache_budget_bytes=None, connection_memory_budget_bytes=None, cold_fetch_mode=None, validate=None, api_key=None, metric="cosine", analyzer=None, text_column=..., vector_column=..., id_column=..., metadata_columns=None) -> InfinoVectorStore`
+    — connects and opens (or with `create=True`, creates) in one call.
+  - `open_or_create(connection, table_name, embedding, *, dim=None, metric="cosine", analyzer=None, text_column=..., vector_column=..., id_column=..., metadata_columns=None) -> InfinoVectorStore`
+    — idempotent: creates the table when absent, opens it when present.
+  - `from_texts(texts, embedding, metadatas=None, *, connection, table_name="langchain", dim=None, ids=None, metric="cosine", analyzer=None, text_column=..., vector_column=..., id_column=..., metadata_columns=None) -> InfinoVectorStore`
     — creates and populates the table.
   - `add_texts(texts, metadatas=None, *, ids=None) -> list[str]` — idempotent upsert.
-  - `similarity_search(query, k=4, filter=None, *, filter_query=None, filter_column=None, filter_mode=None, nprobe=None, rerank_mult=None) -> list[Document]`
+  - `similarity_search(query, k=4, filter=None, *, filter_query=None, filter_column=None, filter_mode=None) -> list[Document]`
   - `similarity_search_with_score(...)`, `similarity_search_by_vector(...)`
   - `max_marginal_relevance_search(query, k=4, fetch_k=20, lambda_mult=0.5, filter=None, ...)`
-  - `delete(ids) -> bool`, `get_by_ids(ids) -> list[Document]`
+  - `delete(ids=None, *, filter=None) -> bool` — by id, by filter, or all of
+    them when `ids` is `None`; `get_by_ids(ids) -> list[Document]`
+  - `delete_by_predicate(predicate) -> MutationStats` — raw SQL, with counts
+  - `token_search(query, *, column=None, mode=None) -> list[Document]` — unranked term match, no `k`.
+  - `exact_search(value, column) -> list[Document]` — verbatim key lookup.
+  - `count(query, *, column=None, mode=None) -> int` — counts in the engine.
+  - `optimize(*, max_memory_mb=None, min_fill_percent=None, target_superfile_size_mb=None, stale_seal_timeout_ms=None) -> None`
+  - `gc(grace_secs) -> GcReport`, `schema() -> pyarrow.Schema`, `drop(*, purge=True)`
   - `search_by_sql(sql) -> list[Document]`
-  - `as_retriever(...)`, `as_hybrid_retriever(k=4, *, nprobe=None, rerank_mult=None)`, `as_bm25_retriever(k=4, mode=None, *, stats=None)`
+  - `as_retriever(...)`, `as_hybrid_retriever(k=4)`, `as_bm25_retriever(k=4, mode=None, *, stats=None)`
+  - `connection`, `table`, `table_name`, `metric`, `dim`, `metadata_columns` — accessors, including for engine calls the store doesn't wrap.
 - `InfinoHybridRetriever`, `InfinoBM25Retriever` — `BaseRetriever`s wrapping a store.
 - `InfinoTranslator` — `StructuredQuery` → SQL filter, for `SelfQueryRetriever`.
-- `InfinoSemanticCache(connection, embedding, *, dim, table_name="langchain_llm_cache", score_threshold=0.05)`
+- `InfinoSemanticCache(connection, embedding, *, dim=None, table_name="langchain_llm_cache", score_threshold=0.05)`
+- `InfinoError` and its recoverable subclasses `ConflictError` (a concurrent
+  writer won the commit race — reissue) and `ConnectionMemoryBudgetError` (the
+  request exceeded `connection_memory_budget_bytes` — narrow it, split the
+  ingest, or raise the budget), plus `MutationStats` and `GcReport`.
 
 `metric` is `"cosine"` (default), `"l2sq"` / `"l2"`, or `"negdot"` / `"dot"`;
-`analyzer` is `"ascii_lower"` (default) or `"standard"`; `stats` is
-`"per_superfile"` (default) or `"global"`.
+`dim` and `metadata_columns` are inferred when omitted — from the embedding
+and `metadatas` when creating a table, from the table's own schema when
+opening one. `analyzer` is `"ascii_lower"` (default) or `"standard"`; `stats` is
+`"per_superfile"` (default) or `"global"`; `cold_fetch_mode` is
+`"hybrid_with_prefetch"`, `"range_only"`, or
+`"lazy_foreground_with_background_fill"`.
 See [Infino](https://github.com/infino-ai/infino) for engine internals.
 
 ## Development

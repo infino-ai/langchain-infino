@@ -44,3 +44,36 @@ def test_cache_clear(cache: InfinoSemanticCache) -> None:
     assert cache.lookup("remember me", "gpt-x") is not None
     cache.clear()
     assert cache.lookup("remember me", "gpt-x") is None
+
+
+def test_cache_reattaches_to_an_existing_table(tmp_path) -> None:
+    """Nothing cached survives a restart unless construction reattaches."""
+    embedding = DeterministicFakeEmbedding(size=EMBED_DIM)
+    uri = str(tmp_path / "cache-db")
+
+    first = InfinoSemanticCache(
+        infino.connect(uri), embedding, dim=EMBED_DIM, table_name="c"
+    )
+    first.update("ping", "model-x", [Generation(text="pong")])
+
+    # A separate connection, as a restarted process would open.
+    second = InfinoSemanticCache(
+        infino.connect(uri), embedding, dim=EMBED_DIM, table_name="c"
+    )
+    hit = second.lookup("ping", "model-x")
+    assert hit is not None
+    assert hit[0].text == "pong"
+
+
+def test_cache_is_usable_again_after_clear(tmp_path) -> None:
+    embedding = DeterministicFakeEmbedding(size=EMBED_DIM)
+    cache = InfinoSemanticCache(
+        infino.connect(str(tmp_path / "db")), embedding, dim=EMBED_DIM
+    )
+    cache.update("ping", "model-x", [Generation(text="pong")])
+    cache.clear()
+    assert cache.lookup("ping", "model-x") is None
+    # clear drops the table, so the rebuilt store must be writable.
+    cache.update("ping", "model-x", [Generation(text="repopulated")])
+    hit = cache.lookup("ping", "model-x")
+    assert hit is not None and hit[0].text == "repopulated"

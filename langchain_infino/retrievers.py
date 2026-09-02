@@ -7,7 +7,7 @@ entirely in the engine.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
@@ -36,9 +36,15 @@ class InfinoHybridRetriever(BaseRetriever):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def _get_relevant_documents(
-        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+        self,
+        query: str,
+        *,
+        run_manager: CallbackManagerForRetrieverRun,
+        **kwargs: Any,
     ) -> list[Document]:
-        return self.vectorstore._hybrid_search(query, self.k)
+        # `invoke` forwards its keywords here, so a per-call `k` overrides the
+        # configured one.
+        return self.vectorstore._hybrid_search(query, kwargs.get("k", self.k))
 
 
 class InfinoBM25Retriever(BaseRetriever):
@@ -58,8 +64,17 @@ class InfinoBM25Retriever(BaseRetriever):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def _get_relevant_documents(
-        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+        self,
+        query: str,
+        *,
+        run_manager: CallbackManagerForRetrieverRun,
+        **kwargs: Any,
     ) -> list[Document]:
+        # `invoke` forwards its keywords here, so a per-call `k`, `mode` or
+        # `stats` overrides the configured one.
         return self.vectorstore._bm25_search(
-            query, self.k, self.mode, stats=self.stats
+            query,
+            kwargs.get("k", self.k),
+            kwargs.get("mode", self.mode),
+            stats=kwargs.get("stats", self.stats),
         )

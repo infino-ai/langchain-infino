@@ -71,7 +71,11 @@ def rows_to_documents(
         raw = metadata_json[i]
         metadata: dict[str, Any] = json.loads(raw) if raw else {}
         for name in extra_columns:
-            metadata[name] = columns[name][i]
+            value = columns[name][i]
+            # A promoted column is null for a document that never carried the
+            # key, so skipping nulls keeps metadata out == metadata in.
+            if value is not None:
+                metadata[name] = value
         doc = Document(id=ids[i], page_content=texts[i] or "", metadata=metadata)
         results.append((doc, scores[i]))
     return results
