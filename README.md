@@ -52,14 +52,13 @@ from langchain_openai import OpenAIEmbeddings
 
 # A local path or an S3 URI for durable storage; "memory://" is ephemeral.
 connection = infino.connect("./data")
-embedding = OpenAIEmbeddings()  # dim must match the table; 1536 here
+embedding = OpenAIEmbeddings()
 
 store = InfinoVectorStore.from_texts(
     ["Infino runs search on object storage.", "One engine for SQL, BM25, and vectors."],
     embedding,
     connection=connection,
     table_name="docs",
-    dim=1536,
 )
 
 docs = store.similarity_search("search on S3", k=2)
@@ -187,26 +186,15 @@ store.similarity_search_by_vector(query_vector, k=4)              # query_vector
 
 ## Metadata filtering
 
-Promote the keys you want to filter on to real columns, then pass the
-LangChain operator form. Supports equality, `$eq` / `$ne` / `$gt` / `$gte` /
-`$lt` / `$lte`, `$in` / `$nin`, and `$and` / `$or` / `$not`.
-
-Filterable keys are declared at table creation. Undeclared metadata still
-round-trips through the JSON catch-all, but filtering on it raises rather than
-scanning — the engine cannot index into serialized JSON — and adding a
-filterable key later means recreating the table. Declare up front what you
-intend to filter on.
+Scalar metadata is filterable out of the box — `from_texts` promotes the keys
+it finds in `metadatas` to real columns. Pass the LangChain operator form:
+equality, `$eq` / `$ne` / `$gt` / `$gte` / `$lt` / `$lte`, `$in` / `$nin`, and
+`$and` / `$or` / `$not`.
 
 ```python
-import pyarrow as pa
-
 store = InfinoVectorStore.from_texts(
     texts, embedding,
-    connection=connection, table_name="papers", dim=1536,
-    metadata_columns=[
-        pa.field("category", pa.large_utf8(), nullable=False),
-        pa.field("year", pa.int64(), nullable=False),
-    ],
+    connection=connection, table_name="papers",
     metadatas=[{"category": "ml", "year": 2024} for _ in texts],
 )
 
@@ -215,6 +203,33 @@ store.similarity_search("optimizers", k=4, filter={"year": {"$gte": 2023}})
 store.similarity_search("optimizers", k=4,
                         filter={"$or": [{"category": "ml"}, {"year": {"$lt": 2000}}]})
 ```
+
+A key is promoted only if every value it carries is a scalar of one consistent
+type. Anything nested, mixed-typed, or named like a column the engine reserves
+(`score`, `_id`, `_metadata_json`) stays in the JSON catch-all: it round-trips
+with the document, but filtering on it raises rather than scanning, because the
+engine has no index into serialized JSON.
+
+Promotion happens once, at table creation, from the metadata present then — so
+declare columns explicitly if later documents will introduce keys you intend to
+filter on, or if you want a specific type or non-null constraint:
+
+```python
+import pyarrow as pa
+
+store = InfinoVectorStore.from_texts(
+    texts, embedding,
+    connection=connection, table_name="papers",
+    metadata_columns=[
+        pa.field("category", pa.large_utf8(), nullable=False),
+        pa.field("year", pa.int64(), nullable=True),
+    ],
+    metadatas=[{"category": "ml", "year": 2024} for _ in texts],
+)
+```
+
+Opening an existing table needs neither `metadata_columns` nor `dim` — both are
+read back from the table's own schema.
 
 ## Text-pushdown pre-filter
 
@@ -410,13 +425,13 @@ The async methods (`aadd_texts`, `asimilarity_search`, …) are inherited from
 
 ## API reference
 
-- `InfinoVectorStore(connection, table_name, embedding, *, dim, metric="cosine", text_column="page_content", vector_column="embedding", id_column="doc_id", metadata_columns=())`
+- `InfinoVectorStore(connection, table_name, embedding, *, dim=None, metric="cosine", text_column="page_content", vector_column="embedding", id_column="doc_id", metadata_columns=None)`
   — opens an existing table.
-  - `connect(uri, embedding, table_name, *, dim, create=False, create_database=False, storage_options=None, cache_dir=None, cache_budget_bytes=None, connection_memory_budget_bytes=None, cold_fetch_mode=None, validate=None, api_key=None, metric="cosine", analyzer=None, text_column=..., vector_column=..., id_column=..., metadata_columns=()) -> InfinoVectorStore`
+  - `connect(uri, embedding, table_name, *, dim=None, create=False, create_database=False, storage_options=None, cache_dir=None, cache_budget_bytes=None, connection_memory_budget_bytes=None, cold_fetch_mode=None, validate=None, api_key=None, metric="cosine", analyzer=None, text_column=..., vector_column=..., id_column=..., metadata_columns=None) -> InfinoVectorStore`
     — connects and opens (or with `create=True`, creates) in one call.
-  - `open_or_create(connection, table_name, embedding, *, dim, metric="cosine", analyzer=None, text_column=..., vector_column=..., id_column=..., metadata_columns=()) -> InfinoVectorStore`
+  - `open_or_create(connection, table_name, embedding, *, dim=None, metric="cosine", analyzer=None, text_column=..., vector_column=..., id_column=..., metadata_columns=None) -> InfinoVectorStore`
     — idempotent: creates the table when absent, opens it when present.
-  - `from_texts(texts, embedding, metadatas=None, *, connection, table_name, dim, ids=None, metric="cosine", analyzer=None, text_column=..., vector_column=..., id_column=..., metadata_columns=()) -> InfinoVectorStore`
+  - `from_texts(texts, embedding, metadatas=None, *, connection, table_name="langchain", dim=None, ids=None, metric="cosine", analyzer=None, text_column=..., vector_column=..., id_column=..., metadata_columns=None) -> InfinoVectorStore`
     — creates and populates the table.
   - `add_texts(texts, metadatas=None, *, ids=None) -> list[str]` — idempotent upsert.
   - `similarity_search(query, k=4, filter=None, *, filter_query=None, filter_column=None, filter_mode=None) -> list[Document]`
@@ -430,17 +445,19 @@ The async methods (`aadd_texts`, `asimilarity_search`, …) are inherited from
   - `gc(grace_secs) -> GcReport`, `schema() -> pyarrow.Schema`
   - `search_by_sql(sql) -> list[Document]`
   - `as_retriever(...)`, `as_hybrid_retriever(k=4)`, `as_bm25_retriever(k=4, mode=None, *, stats=None)`
-  - `connection`, `table`, `table_name`, `metric` — accessors for engine calls the store doesn't wrap.
+  - `connection`, `table`, `table_name`, `metric`, `dim`, `metadata_columns` — accessors, including for engine calls the store doesn't wrap.
 - `InfinoHybridRetriever`, `InfinoBM25Retriever` — `BaseRetriever`s wrapping a store.
 - `InfinoTranslator` — `StructuredQuery` → SQL filter, for `SelfQueryRetriever`.
-- `InfinoSemanticCache(connection, embedding, *, dim, table_name="langchain_llm_cache", score_threshold=0.05)`
+- `InfinoSemanticCache(connection, embedding, *, dim=None, table_name="langchain_llm_cache", score_threshold=0.05)`
 - `InfinoError` and its recoverable subclasses `ConflictError` (a concurrent
   writer won the commit race — reissue) and `ConnectionMemoryBudgetError` (the
   request exceeded `connection_memory_budget_bytes` — narrow it, split the
   ingest, or raise the budget), plus `MutationStats` and `GcReport`.
 
 `metric` is `"cosine"` (default), `"l2sq"` / `"l2"`, or `"negdot"` / `"dot"`;
-`analyzer` is `"ascii_lower"` (default) or `"standard"`; `stats` is
+`dim` and `metadata_columns` are inferred when omitted — from the embedding
+and `metadatas` when creating a table, from the table's own schema when
+opening one. `analyzer` is `"ascii_lower"` (default) or `"standard"`; `stats` is
 `"per_superfile"` (default) or `"global"`; `cold_fetch_mode` is
 `"hybrid_with_prefetch"`, `"range_only"`, or
 `"lazy_foreground_with_background_fill"`.

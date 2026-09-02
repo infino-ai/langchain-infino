@@ -48,6 +48,7 @@ DEFAULT_METRIC: Metric = "cosine"
 DEFAULT_TEXT_COLUMN = "page_content"
 DEFAULT_VECTOR_COLUMN = "embedding"
 DEFAULT_ID_COLUMN = "doc_id"
+DEFAULT_TABLE_NAME = "langchain"
 DEFAULT_FETCH_K = 20
 DEFAULT_LAMBDA_MULT = 0.5
 # Structured filter is a WHERE applied after the TVF ranks, so over-fetch to
@@ -127,16 +128,17 @@ class InfinoVectorStore(VectorStore):
         table_name: the table to open (must already exist; use
             :meth:`from_texts` to create and populate one).
         embedding: the LangChain embeddings to use for query and documents.
-        dim: embedding dimension; must match the table's vector column and
-            lie in the engine's supported range [16, 4096].
+        dim: embedding dimension. Read off the table's vector column when
+            omitted; if given, it must match. The engine supports [16, 4096].
         metric: distance metric to index with — ``"cosine"`` (default),
             ``"l2sq"`` / ``"l2"``, ``"negdot"`` / ``"dot"``. Relevance
             normalization is defined for cosine/l2/l2sq; others serve raw
             distances only.
         text_column / vector_column / id_column: column names.
-        metadata_columns: metadata keys to promote to real scalar columns so
-            they can be filtered with the ``filter`` argument; any remaining
-            metadata is kept in the JSON catch-all. Fixed at table creation —
+        metadata_columns: metadata keys promoted to real scalar columns, so
+            they can be filtered with the ``filter`` argument; the rest is
+            kept in the JSON catch-all, which is not filterable. Taken from
+            the table's own schema when omitted. Fixed at table creation —
             adding a filterable key later means recreating the table.
     """
 
@@ -146,27 +148,42 @@ class InfinoVectorStore(VectorStore):
         table_name: str,
         embedding: Embeddings,
         *,
-        dim: int,
+        dim: int | None = None,
         metric: Metric = DEFAULT_METRIC,
         text_column: str = DEFAULT_TEXT_COLUMN,
         vector_column: str = DEFAULT_VECTOR_COLUMN,
         id_column: str = DEFAULT_ID_COLUMN,
-        metadata_columns: Sequence[pa.Field] = (),
+        metadata_columns: Sequence[pa.Field] | None = None,
         table: infino.Table | None = None,
     ) -> None:
         self._connection = connection
         self._table_name = table_name
         self._embedding = embedding
-        self._dim = dim
         self._metric = metric
         self._text_column = text_column
         self._vector_column = vector_column
         self._id_column = id_column
-        self._metadata_columns = list(metadata_columns)
-        self._metadata_column_names = [f.name for f in self._metadata_columns]
         # `table` is the handle from a just-created table, passed straight
         # through to save a redundant open; without one, open the named table.
         self._table = table if table is not None else connection.open_table(table_name)
+
+        # The table already declares its embedding width and which metadata
+        # keys were promoted, so neither has to be repeated to open one. Read
+        # the schema only if one of them is actually missing.
+        if dim is None or metadata_columns is None:
+            schema = self._table.schema()
+            if dim is None:
+                dim = _dim_from_schema(schema, vector_column)
+            if metadata_columns is None:
+                metadata_columns = _metadata_fields_from_schema(
+                    schema,
+                    text_column=text_column,
+                    vector_column=vector_column,
+                    id_column=id_column,
+                )
+        self._dim = dim
+        self._metadata_columns = list(metadata_columns)
+        self._metadata_column_names = [f.name for f in self._metadata_columns]
 
     @property
     def embeddings(self) -> Embeddings:
@@ -190,6 +207,15 @@ class InfinoVectorStore(VectorStore):
     @property
     def metric(self) -> Metric:
         return self._metric
+
+    @property
+    def dim(self) -> int:
+        return self._dim
+
+    @property
+    def metadata_columns(self) -> list[pa.Field]:
+        """The promoted metadata columns — the keys ``filter`` can reach."""
+        return list(self._metadata_columns)
 
     def add_texts(
         self,
@@ -647,13 +673,13 @@ class InfinoVectorStore(VectorStore):
         table_name: str,
         embedding: Embeddings,
         *,
-        dim: int,
+        dim: int | None = None,
         metric: Metric = DEFAULT_METRIC,
         analyzer: str | None = None,
         text_column: str = DEFAULT_TEXT_COLUMN,
         vector_column: str = DEFAULT_VECTOR_COLUMN,
         id_column: str = DEFAULT_ID_COLUMN,
-        metadata_columns: Sequence[pa.Field] = (),
+        metadata_columns: Sequence[pa.Field] | None = None,
     ) -> InfinoVectorStore:
         """Open ``table_name``, creating it first if it isn't there.
 
@@ -667,6 +693,8 @@ class InfinoVectorStore(VectorStore):
         """
         table: infino.Table | None = None
         if table_name not in connection.list_tables():
+            if dim is None:
+                dim = _dim_from_embedding(embedding)
             try:
                 table = _create_table(
                     connection,
@@ -677,7 +705,7 @@ class InfinoVectorStore(VectorStore):
                     text_column=text_column,
                     vector_column=vector_column,
                     id_column=id_column,
-                    metadata_columns=metadata_columns,
+                    metadata_columns=metadata_columns or (),
                 )
             except ValueError:
                 # Lost the race to a concurrent creator: use their table. Any
@@ -704,7 +732,7 @@ class InfinoVectorStore(VectorStore):
         embedding: Embeddings,
         table_name: str,
         *,
-        dim: int,
+        dim: int | None = None,
         create: bool = False,
         create_database: bool = False,
         # Connection configuration, mirroring the engine's own `connect`.
@@ -721,7 +749,7 @@ class InfinoVectorStore(VectorStore):
         text_column: str = DEFAULT_TEXT_COLUMN,
         vector_column: str = DEFAULT_VECTOR_COLUMN,
         id_column: str = DEFAULT_ID_COLUMN,
-        metadata_columns: Sequence[pa.Field] = (),
+        metadata_columns: Sequence[pa.Field] | None = None,
     ) -> InfinoVectorStore:
         """Open a store straight from a URI, without building a connection first.
 
@@ -808,23 +836,32 @@ class InfinoVectorStore(VectorStore):
         metadatas: list[dict[str, Any]] | None = None,
         *,
         connection: infino.Connection,
-        table_name: str,
-        dim: int,
+        table_name: str = DEFAULT_TABLE_NAME,
+        dim: int | None = None,
         ids: list[str] | None = None,
         metric: Metric = DEFAULT_METRIC,
         analyzer: str | None = None,
         text_column: str = DEFAULT_TEXT_COLUMN,
         vector_column: str = DEFAULT_VECTOR_COLUMN,
         id_column: str = DEFAULT_ID_COLUMN,
-        metadata_columns: Sequence[pa.Field] = (),
+        metadata_columns: Sequence[pa.Field] | None = None,
         **kwargs: Any,
     ) -> InfinoVectorStore:
         """Create the table, then embed and insert ``texts``.
 
-        ``analyzer`` names the FTS tokenizer for the text column (engine
-        default when omitted); the id column always keeps the default so
-        ``exact_match`` resolves ids verbatim.
+        ``dim`` is taken from ``embedding`` when omitted. ``metadata_columns``
+        likewise defaults to the scalar keys found in ``metadatas``, promoting
+        them to filterable columns; pass ``()`` to promote none, or an explicit
+        list to control names, types and nullability. Keys that are nested or
+        inconsistently typed stay in the JSON catch-all either way.
         """
+        if dim is None:
+            dim = _dim_from_embedding(embedding)
+        if metadata_columns is None:
+            metadata_columns = _infer_metadata_columns(
+                metadatas or [],
+                _reserved_columns(text_column, vector_column, id_column),
+            )
         table = _create_table(
             connection,
             table_name,
@@ -853,6 +890,111 @@ class InfinoVectorStore(VectorStore):
         return store
 
 
+def _dim_from_embedding(embedding: Embeddings) -> int:
+    """Measure the embedding width, for a table that has yet to declare one."""
+    return len(embedding.embed_query("dimension probe"))
+
+
+def _dim_from_schema(schema: pa.Schema, vector_column: str) -> int:
+    """Read the embedding width off a table's declared vector column."""
+    try:
+        field = schema.field(vector_column)
+    except KeyError:
+        raise ValueError(
+            f"table has no vector column {vector_column!r} "
+            f"(columns: {schema.names}); pass `vector_column=`"
+        ) from None
+    size = getattr(field.type, "list_size", None)
+    if size is None:
+        raise ValueError(
+            f"column {vector_column!r} is {field.type}, not a fixed-size list; "
+            f"pass `dim=` explicitly"
+        )
+    return int(size)
+
+
+def _metadata_fields_from_schema(
+    schema: pa.Schema,
+    *,
+    text_column: str,
+    vector_column: str,
+    id_column: str,
+) -> list[pa.Field]:
+    """The promoted metadata columns of an existing table.
+
+    Whatever is neither an id, text, vector nor the JSON catch-all was
+    promoted at creation, so it is filterable.
+    """
+    reserved = {id_column, text_column, vector_column, METADATA_JSON_COLUMN}
+    return [field for field in schema if field.name not in reserved]
+
+
+def _reserved_columns(
+    text_column: str, vector_column: str, id_column: str
+) -> set[str]:
+    """Column names a promoted metadata key may not take.
+
+    ``score`` is the relevance column the search functions append and ``_id``
+    the engine's internal key; colliding with either produces a duplicate
+    column the engine rejects mid-query.
+    """
+    return {
+        text_column,
+        vector_column,
+        id_column,
+        METADATA_JSON_COLUMN,
+        SCORE_COLUMN,
+        "_id",
+    }
+
+
+def _infer_metadata_columns(
+    metadatas: Sequence[Mapping[str, Any]],
+    reserved: set[str],
+) -> list[pa.Field]:
+    """Promote the scalar metadata keys in ``metadatas`` to real columns.
+
+    A key is promoted only if every value it carries is a scalar of one
+    consistent type; anything mixed, nested, or named like a structural column
+    stays in the JSON catch-all, which is not filterable. Promoted columns are
+    nullable because the schema is fixed at creation and a later append may
+    omit the key.
+    """
+    types: dict[str, type] = {}
+    skipped: set[str] = set(reserved)
+    for metadata in metadatas:
+        for key, value in metadata.items():
+            if value is None or key in skipped:
+                continue
+            # bool before int: bool is an int subclass in Python.
+            for python_type in (bool, int, float, str):
+                if isinstance(value, python_type):
+                    break
+            else:
+                skipped.add(key)
+                types.pop(key, None)
+                continue
+            known = types.setdefault(key, python_type)
+            if known is not python_type:
+                # int alongside float widens; anything else is a real conflict.
+                if {known, python_type} == {int, float}:
+                    types[key] = float
+                else:
+                    skipped.add(key)
+                    types.pop(key, None)
+
+    arrow_types = {
+        bool: pa.bool_(),
+        int: pa.int64(),
+        float: pa.float64(),
+        str: pa.large_utf8(),
+    }
+    return [
+        pa.field(key, arrow_types[python_type], nullable=True)
+        for key, python_type in types.items()
+    ]
+
+
 def _create_table(
     connection: infino.Connection,
     table_name: str,
@@ -870,6 +1012,17 @@ def _create_table(
     The id column keeps the default analyzer so ``exact_match`` resolves ids
     verbatim, whatever ``analyzer`` the text column gets.
     """
+    reserved = _reserved_columns(text_column, vector_column, id_column) - {
+        text_column,
+        vector_column,
+        id_column,
+    }
+    clashing = sorted(f.name for f in metadata_columns if f.name in reserved)
+    if clashing:
+        raise ValueError(
+            f"metadata column(s) {clashing} collide with columns the engine "
+            f"reserves ({sorted(reserved)}); rename them"
+        )
     return connection.create_table(
         table_name,
         _build_schema(dim, text_column, vector_column, id_column, metadata_columns),

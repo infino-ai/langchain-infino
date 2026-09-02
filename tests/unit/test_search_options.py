@@ -16,6 +16,18 @@ from langchain_infino.vectorstores import InfinoVectorStore
 
 EMBED_DIM = 16
 
+# The schema a store reads back to learn its embedding width and which
+# metadata keys were promoted.
+def _stub_schema(dim: int = EMBED_DIM) -> pa.Schema:
+    return pa.schema(
+        [
+            pa.field("doc_id", pa.large_utf8(), nullable=False),
+            pa.field("page_content", pa.large_utf8(), nullable=False),
+            pa.field("embedding", pa.list_(pa.float32(), dim), nullable=False),
+            pa.field("_metadata_json", pa.large_utf8(), nullable=False),
+        ]
+    )
+
 
 class _RecordingTable:
     """Stand-in for ``infino.Table`` capturing the keywords it was called with."""
@@ -26,6 +38,9 @@ class _RecordingTable:
     def _record(self, method: str, **kwargs: Any) -> pa.Table:
         self.calls[method] = kwargs
         return pa.table({})
+
+    def schema(self) -> pa.Schema:
+        return _stub_schema()
 
     def vector_search(
         self, column: str, query: Any, k: int, **kwargs: Any

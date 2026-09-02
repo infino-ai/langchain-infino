@@ -199,3 +199,86 @@ def test_open_or_create_rejects_an_unbuildable_table(tmp_path) -> None:
             DeterministicFakeEmbedding(size=4),
             dim=4,  # below the engine's supported minimum of 16
         )
+
+
+def test_dim_is_inferred_from_the_embedding_when_creating(tmp_path) -> None:
+    store = InfinoVectorStore.from_texts(
+        ["alpha vector search"],
+        DeterministicFakeEmbedding(size=EMBED_DIM),
+        connection=infino.connect(str(tmp_path / "db")),
+    )
+    assert store.schema().field("embedding").type.list_size == EMBED_DIM
+    assert len(store.similarity_search("search", k=1)) == 1
+
+
+def test_scalar_metadata_is_filterable_without_declaring_columns(tmp_path) -> None:
+    store = InfinoVectorStore.from_texts(
+        ["alpha search", "beta search", "gamma search"],
+        DeterministicFakeEmbedding(size=EMBED_DIM),
+        metadatas=[
+            {"src": "a", "year": 2024, "ok": True},
+            {"src": "b", "year": 2023, "ok": False},
+            {"src": "c"},
+        ],
+        connection=infino.connect(str(tmp_path / "db")),
+    )
+    for filter_, expected in [
+        ({"src": "a"}, ["a"]),
+        ({"year": {"$gte": 2024}}, ["a"]),
+        ({"ok": True}, ["a"]),
+        ({"year": {"$lt": 2024}}, ["b"]),
+    ]:
+        found = store.similarity_search("search", k=3, filter=filter_)
+        assert [d.metadata["src"] for d in found] == expected
+
+
+def test_a_document_missing_a_promoted_key_gains_no_null(tmp_path) -> None:
+    store = InfinoVectorStore.from_texts(
+        ["alpha search", "beta search"],
+        DeterministicFakeEmbedding(size=EMBED_DIM),
+        metadatas=[{"src": "a", "year": 2024}, {"src": "b"}],
+        connection=infino.connect(str(tmp_path / "db")),
+    )
+    sparse = store.similarity_search("search", k=2, filter={"src": "b"})
+    assert sparse[0].metadata == {"src": "b"}
+
+
+def test_metadata_the_engine_cannot_index_still_round_trips(tmp_path) -> None:
+    # Nested values and names the engine reserves stay in the JSON catch-all:
+    # not filterable, but not lost either.
+    store = InfinoVectorStore.from_texts(
+        ["alpha search"],
+        DeterministicFakeEmbedding(size=EMBED_DIM),
+        metadatas=[{"tags": ["x", "y"], "score": 1.5, "src": "a"}],
+        connection=infino.connect(str(tmp_path / "db")),
+    )
+    assert [f.name for f in store.metadata_columns] == ["src"]
+    found = store.similarity_search("search", k=1)
+    assert found[0].metadata == {"tags": ["x", "y"], "score": 1.5, "src": "a"}
+
+
+def test_reopening_needs_neither_dim_nor_columns(tmp_path) -> None:
+    embedding = DeterministicFakeEmbedding(size=EMBED_DIM)
+    uri = str(tmp_path / "db")
+    InfinoVectorStore.from_texts(
+        ["alpha search", "beta search"],
+        embedding,
+        metadatas=[{"src": "a"}, {"src": "b"}],
+        connection=infino.connect(uri),
+        table_name="docs",
+    )
+    # Both are declared by the table, so neither has to be repeated.
+    reopened = InfinoVectorStore.connect(uri, embedding, "docs")
+    found = reopened.similarity_search("search", k=2, filter={"src": "b"})
+    assert [d.metadata["src"] for d in found] == ["b"]
+
+
+def test_declaring_a_reserved_column_name_fails_at_creation(tmp_path) -> None:
+    # Better here than as a duplicate-column error on the first filtered query.
+    with pytest.raises(ValueError, match="reserves"):
+        InfinoVectorStore.from_texts(
+            ["alpha search"],
+            DeterministicFakeEmbedding(size=EMBED_DIM),
+            connection=infino.connect(str(tmp_path / "db")),
+            metadata_columns=[pa.field("score", pa.float64(), nullable=True)],
+        )

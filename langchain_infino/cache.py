@@ -7,7 +7,7 @@ threshold. One small Infino table, no extra infrastructure.
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Optional, cast
 
 import infino
 import pyarrow as pa
@@ -35,7 +35,7 @@ class InfinoSemanticCache(BaseCache):
     Args:
         connection: a live :class:`infino.Connection`.
         embedding: embeddings used to key prompts; must match ``dim``.
-        dim: embedding dimension.
+        dim: embedding dimension; measured from ``embedding`` when omitted.
         table_name: cache table name.
         score_threshold: maximum cosine distance for a cache hit.
     """
@@ -45,7 +45,7 @@ class InfinoSemanticCache(BaseCache):
         connection: infino.Connection,
         embedding: Embeddings,
         *,
-        dim: int,
+        dim: Optional[int] = None,
         table_name: str = "langchain_llm_cache",
         score_threshold: float = DEFAULT_CACHE_DISTANCE_THRESHOLD,
     ) -> None:

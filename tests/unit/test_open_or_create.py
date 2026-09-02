@@ -8,12 +8,30 @@ would surface as a confusing error on the first write instead.
 
 from typing import Any
 
+import pyarrow as pa
 import pytest
 from langchain_core.embeddings import DeterministicFakeEmbedding
 
 from langchain_infino import InfinoVectorStore
 
 EMBED_DIM = 16
+
+# The schema a store reads back to learn its embedding width and which
+# metadata keys were promoted.
+def _stub_schema(dim: int = EMBED_DIM) -> pa.Schema:
+    return pa.schema(
+        [
+            pa.field("doc_id", pa.large_utf8(), nullable=False),
+            pa.field("page_content", pa.large_utf8(), nullable=False),
+            pa.field("embedding", pa.list_(pa.float32(), dim), nullable=False),
+            pa.field("_metadata_json", pa.large_utf8(), nullable=False),
+        ]
+    )
+
+
+class _StubTable:
+    def schema(self) -> pa.Schema:
+        return _stub_schema()
 
 
 class _RacingConnection:
@@ -40,7 +58,7 @@ class _RacingConnection:
 
     def open_table(self, name: str) -> object:
         self.opened.append(name)
-        return object()
+        return _StubTable()
 
 
 def _open_or_create(connection: Any) -> InfinoVectorStore:

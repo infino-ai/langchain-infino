@@ -9,6 +9,7 @@ never expressed a preference about.
 from typing import Any
 from unittest.mock import patch
 
+import pyarrow as pa
 import pytest
 from langchain_core.embeddings import DeterministicFakeEmbedding
 
@@ -16,6 +17,23 @@ import langchain_infino.vectorstores as vectorstores
 from langchain_infino import InfinoVectorStore
 
 EMBED_DIM = 16
+
+# The schema a store reads back to learn its embedding width and which
+# metadata keys were promoted.
+def _stub_schema(dim: int = EMBED_DIM) -> pa.Schema:
+    return pa.schema(
+        [
+            pa.field("doc_id", pa.large_utf8(), nullable=False),
+            pa.field("page_content", pa.large_utf8(), nullable=False),
+            pa.field("embedding", pa.list_(pa.float32(), dim), nullable=False),
+            pa.field("_metadata_json", pa.large_utf8(), nullable=False),
+        ]
+    )
+
+
+class _StubTable:
+    def schema(self) -> pa.Schema:
+        return _stub_schema()
 
 
 class _StubConnection:
@@ -39,13 +57,13 @@ class _StubConnection:
             raise ValueError(f"create_table({name}): {name}")
         self.tables.append(name)
         self.created_table = (name, indexes)
-        return object()
+        return _StubTable()
 
     def open_table(self, name: str) -> object:
         if name not in self.tables:
             raise KeyError(name)
         self.opened.append(name)
-        return object()
+        return _StubTable()
 
     def list_tables(self) -> list[str]:
         return list(self.tables)
