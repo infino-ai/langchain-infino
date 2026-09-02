@@ -456,7 +456,7 @@ The async methods (`aadd_texts`, `asimilarity_search`, …) are inherited from
   - `exact_search(value, column) -> list[Document]` — verbatim key lookup.
   - `count(query, *, column=None, mode=None) -> int` — counts in the engine.
   - `optimize(*, max_memory_mb=None, min_fill_percent=None, target_superfile_size_mb=None, stale_seal_timeout_ms=None) -> None`
-  - `gc(grace_secs) -> GcReport`, `schema() -> pyarrow.Schema`
+  - `gc(grace_secs) -> GcReport`, `schema() -> pyarrow.Schema`, `drop(*, purge=True)`
   - `search_by_sql(sql) -> list[Document]`
   - `as_retriever(...)`, `as_hybrid_retriever(k=4)`, `as_bm25_retriever(k=4, mode=None, *, stats=None)`
   - `connection`, `table`, `table_name`, `metric`, `dim`, `metadata_columns` — accessors, including for engine calls the store doesn't wrap.

@@ -317,3 +317,14 @@ def test_delete_by_predicate_reports_what_it_removed(store) -> None:
 def test_deleting_absent_ids_still_reports_success(store) -> None:
     # Idempotent: nothing matched, but the delete did not fail.
     assert store.delete(["no-such-id"]) is True
+
+
+def test_drop_removes_the_table(store) -> None:
+    assert store.connection.list_tables() == ["docs"]
+    store.drop()
+    assert store.connection.list_tables() == []
+
+
+def test_drop_without_purge_keeps_the_stored_objects(store) -> None:
+    store.drop(purge=False)
+    assert store.connection.list_tables() == []

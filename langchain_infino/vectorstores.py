@@ -420,6 +420,16 @@ class InfinoVectorStore(VectorStore):
         self._table.delete(predicate)
         return True
 
+    def drop(self, *, purge: bool = True) -> None:
+        """Drop the table itself, not just its rows.
+
+        Irreversible with ``purge`` (the default), which also removes the
+        table's stored objects; ``purge=False`` unregisters it but leaves the
+        storage behind. The store is unusable afterwards — build a new one to
+        recreate the table.
+        """
+        self._connection.drop_table(self._table_name, purge)
+
     def delete_by_predicate(self, predicate: str) -> infino.MutationStats:
         """Delete rows matching a raw SQL ``predicate``, returning the counts.
 
