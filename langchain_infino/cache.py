@@ -57,11 +57,13 @@ class InfinoSemanticCache(BaseCache):
         self._store = self._build_store()
 
     def _build_store(self) -> InfinoVectorStore:
-        return InfinoVectorStore.from_texts(
-            [],
+        # A cache outlives the process that filled it, so constructing one
+        # against an existing table reattaches instead of failing. `clear`
+        # drops the table, and the next build recreates it.
+        return InfinoVectorStore.open_or_create(
+            self._connection,
+            self._table_name,
             self._embedding,
-            connection=self._connection,
-            table_name=self._table_name,
             dim=self._dim,
             metric="cosine",
             metadata_columns=[
