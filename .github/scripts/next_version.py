@@ -97,6 +97,30 @@ def render(version: Version) -> str:
     return ".".join(str(part) for part in version)
 
 
+# What a release actually delivers: the wheel packages `langchain_infino/`, and
+# its metadata and dependency bounds come from `pyproject.toml`. A push that
+# touches neither ships nothing, whatever else it changed.
+SHIPPING_PREFIX = "langchain_infino/"
+SHIPPING_FILES = frozenset({"pyproject.toml"})
+
+
+def is_shipping_change(paths: list[str]) -> bool:
+    """Whether any of ``paths`` ends up in what a user installs.
+
+    The push trigger already filters these out, but that filter is a glob in
+    YAML that nothing verifies. This is the same rule as code, checked before
+    a version is taken and covered by tests, because a release cannot be
+    recalled once the index has it.
+    """
+    for path in paths:
+        candidate = path.strip()
+        if not candidate:
+            continue
+        if candidate in SHIPPING_FILES or candidate.startswith(SHIPPING_PREFIX):
+            return True
+    return False
+
+
 def decide(
     old_pyproject: Optional[str], new_pyproject: str, tags: list[str]
 ) -> tuple[str, str, str]:
@@ -128,6 +152,10 @@ def main() -> int:
     parser.add_argument(
         "--tags", default="", help="whitespace-separated existing release tags"
     )
+    parser.add_argument(
+        "--changed-files",
+        help="newline-separated paths in the push; omit to assume a release is wanted",
+    )
     args = parser.parse_args()
 
     with open(args.new_pyproject, encoding="utf-8") as handle:
@@ -139,13 +167,23 @@ def main() -> int:
 
     kind, version, reason = decide(old_pyproject, new_pyproject, args.tags.split())
 
-    print(f"bump={kind} version={version} ({reason})")
+    # A manual run has no file list and is taken at its word; a push is only
+    # released if something a user installs actually moved.
+    if args.changed_files is None:
+        shipping = True
+    else:
+        shipping = is_shipping_change(args.changed_files.splitlines())
+        if not shipping:
+            reason = "nothing shipping changed; no release"
+
+    print(f"bump={kind} version={version} shipping={shipping} ({reason})")
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with open(output, "a", encoding="utf-8") as handle:
             handle.write(f"bump={kind}\n")
             handle.write(f"version={version}\n")
             handle.write(f"reason={reason}\n")
+            handle.write(f"shipping={'true' if shipping else 'false'}\n")
     return 0
 
 

@@ -53,6 +53,7 @@ jobs:
       version: ${{ steps.next.outputs.version }}
       bump: ${{ steps.next.outputs.bump }}
       reason: ${{ steps.next.outputs.reason }}
+      shipping: ${{ steps.next.outputs.shipping }}
     steps:
       # Full history and tags: the base version is the highest of the tree and
       # the release tags, and the bump needs the previous revision to diff.
@@ -76,9 +77,12 @@ jobs:
              && git cat-file -e "$BEFORE:pyproject.toml" 2>/dev/null; then
             git show "$BEFORE:pyproject.toml" > /tmp/previous-pyproject.toml
             echo "path=/tmp/previous-pyproject.toml" >> "$GITHUB_OUTPUT"
+            git diff --name-only "$BEFORE" "$GITHUB_SHA" > /tmp/changed-files
+            echo "changed=/tmp/changed-files" >> "$GITHUB_OUTPUT"
           else
             echo "::notice::no previous revision to compare; a patch it is"
             echo "path=" >> "$GITHUB_OUTPUT"
+            echo "changed=" >> "$GITHUB_OUTPUT"
           fi
 
       - id: next
@@ -87,11 +91,13 @@ jobs:
           python3 .github/scripts/next_version.py \
             --new-pyproject pyproject.toml \
             ${{ steps.previous.outputs.path && format('--old-pyproject {0}', steps.previous.outputs.path) || '' }} \
+            ${{ steps.previous.outputs.changed && format('--changed-files "$(cat {0})"', steps.previous.outputs.changed) || '' }} \
             --tags "$(git tag --list 'v*' | tr '\n' ' ')"
 
       # A version already on the index cannot be replaced, so stop here with a
       # readable error rather than failing inside the upload.
       - name: Refuse a version PyPI already has
+        if: steps.next.outputs.shipping == 'true'
         env:
           VERSION: ${{ steps.next.outputs.version }}
         run: |
@@ -124,17 +130,26 @@ jobs:
           BUMP: ${{ steps.next.outputs.bump }}
           VERSION: ${{ steps.next.outputs.version }}
           REASON: ${{ steps.next.outputs.reason }}
+          SHIPPING: ${{ steps.next.outputs.shipping }}
         run: |
-          {
-            echo "### Release $VERSION (\`$BUMP\`)"
-            echo
-            echo "$REASON"
-          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$SHIPPING" == "true" ]]; then
+            {
+              echo "### Release $VERSION (\`$BUMP\`)"
+              echo
+              echo "$REASON"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### No release"
+              echo
+              echo "$REASON"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   release:
     name: Release ${{ needs.decide.outputs.version }}
     needs: decide
-    if: ${{ !inputs.dry_run }}
+    if: ${{ needs.decide.outputs.shipping == 'true' && !inputs.dry_run }}
     # A called workflow cannot hold more than its caller, so the permissions
     # its jobs need are granted here: OIDC for the trusted-publisher upload,
     # and write access to push the release tag.

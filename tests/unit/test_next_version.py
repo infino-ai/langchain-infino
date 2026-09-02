@@ -121,3 +121,44 @@ def test_a_project_without_a_version_is_an_error() -> None:
 def test_a_non_numeric_project_version_is_an_error() -> None:
     with pytest.raises(ValueError, match="MAJOR.MINOR.PATCH"):
         next_version.project_version('[project]\nversion = "0.3.0rc1"\n')
+
+
+def test_a_change_under_the_package_ships() -> None:
+    assert next_version.is_shipping_change(["langchain_infino/vectorstores.py"])
+
+
+def test_a_change_to_pyproject_ships() -> None:
+    # Dependency bounds and metadata reach the user through it.
+    assert next_version.is_shipping_change(["pyproject.toml"])
+
+
+def test_docs_ci_and_tests_do_not_ship() -> None:
+    assert not next_version.is_shipping_change(
+        [
+            "README.md",
+            "LICENSE",
+            "Makefile",
+            ".gitignore",
+            ".github/workflows/release.yml",
+            ".github/scripts/next_version.py",
+            "tests/unit/test_next_version.py",
+            "tests/integration/test_compliance.py",
+        ]
+    )
+
+
+def test_one_shipping_file_among_many_is_enough() -> None:
+    assert next_version.is_shipping_change(
+        ["README.md", ".github/workflows/ci.yml", "langchain_infino/cache.py"]
+    )
+
+
+def test_no_changed_files_ships_nothing() -> None:
+    assert not next_version.is_shipping_change([])
+    assert not next_version.is_shipping_change(["", "  "])
+
+
+def test_a_lookalike_path_does_not_ship() -> None:
+    # Only the package directory itself, not something merely prefixed by it.
+    assert not next_version.is_shipping_change(["langchain_infino_extras/x.py"])
+    assert not next_version.is_shipping_change(["docs/pyproject.toml"])

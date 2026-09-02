@@ -502,8 +502,13 @@ bump follows the engine, since tracking `infino` is what this package is for:
 
 The version counts up from the higher of `pyproject.toml` and the latest `v*`
 tag; a successful publish tags the commit, which is what makes the next one
-count correctly. A push touching only docs, tests, CI or the Makefile ships
-nothing and releases nothing.
+count correctly.
+
+A release has to carry something a user installs — a change under
+`langchain_infino/` or to `pyproject.toml`. A push touching only docs, tests,
+CI or the Makefile releases nothing: the push trigger filters those out, and
+the workflow checks the rule again before taking a version, so nothing rests on
+a glob in YAML being read the way it was meant.
 
 The upload is not automatic to the end: it runs through `publish.yml` — the
 same path a manual release takes — which gates on the `pypi` GitHub
