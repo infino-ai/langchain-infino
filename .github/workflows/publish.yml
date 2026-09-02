@@ -107,9 +107,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     # `environment` is load-bearing, not decoration: the PyPI/TestPyPI trusted
-    # publisher is keyed to it (plus repo + workflow file), and it can gate
-    # `pypi` behind required reviewers. `id-token: write` lets the upload
-    # authenticate over OIDC instead of a stored token.
+    # publisher is keyed to it (plus repo + workflow file), so removing it
+    # breaks authentication even though nothing here gates on it — `pypi`
+    # deliberately carries no protection rule, and releases are unattended.
+    # `id-token: write` lets the upload authenticate over OIDC instead of a
+    # stored token.
     permissions:
       id-token: write
       contents: read

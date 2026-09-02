@@ -7,8 +7,15 @@ name: Release on merge
 #
 # The upload itself is not duplicated here — this calls `publish.yml`, the same
 # path a manual release takes, so there is one place that builds, smoke-tests
-# and uploads. That workflow gates on the `pypi` environment, which is where a
-# reviewer approves before anything reaches the index.
+# and uploads.
+#
+# This publishes unattended. The `pypi` environment carries no protection rule,
+# so nothing pauses for approval: a merge that changes shipped code reaches the
+# index on its own, and a release cannot be recalled once it does. What stands
+# between a bad merge and PyPI is the build's smoke test, which installs the
+# wheel in a clean interpreter before the upload job runs, and the guard below
+# that refuses a version the index already has. Add required reviewers to the
+# `pypi` environment if that ever stops being the tradeoff you want.
 #
 # Note for whoever wires this up: PyPI Trusted Publishing matches the
 # entry-point workflow, so `release.yml` needs its own publisher entry on PyPI

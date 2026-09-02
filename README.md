@@ -510,10 +510,11 @@ CI or the Makefile releases nothing: the push trigger filters those out, and
 the workflow checks the rule again before taking a version, so nothing rests on
 a glob in YAML being read the way it was meant.
 
-The upload is not automatic to the end: it runs through `publish.yml` — the
-same path a manual release takes — which gates on the `pypi` GitHub
-environment, so a reviewer approves before anything reaches the index. To cut
-a release by hand, or to publish a pre-release or to TestPyPI, run that
+The upload runs through `publish.yml`, the same path a manual release takes,
+and it is unattended — a qualifying merge reaches PyPI without anyone
+approving it. Before the upload, the built wheel is installed into a clean
+interpreter and smoke-tested, and a version already on the index is refused.
+To cut a release by hand, or to publish a pre-release or to TestPyPI, run that
 workflow directly.
 
 ## License
