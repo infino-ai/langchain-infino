@@ -43,6 +43,11 @@ jobs:
       - run: mypy langchain_infino
       - run: pytest tests/unit -q
 
+      # A broken workflow expression is invisible until the workflow fires,
+      # and the release train is the wrong place to find one.
+      - name: Lint the workflows
+        uses: raven-actions/actionlint@v2
+
   # Full suite (integration + compliance) against the engine, pulled from
   # PyPI with the rest of the deps.
   integration:

@@ -489,6 +489,28 @@ make smoke        # build the wheel, install it in a clean venv, run the smoke t
 make clean        # remove build artifacts and caches
 ```
 
+## Releases
+
+A merge to main that changes shipped code publishes to PyPI. The size of the
+bump follows the engine, since tracking `infino` is what this package is for:
+
+| the `infino` requirement moved | this package releases |
+| --- | --- |
+| a new major (`0.x` → `1.x`) | a major |
+| a new minor (`0.5` → `0.6`) | a minor |
+| a new patch, or did not move | a patch |
+
+The version counts up from the higher of `pyproject.toml` and the latest `v*`
+tag; a successful publish tags the commit, which is what makes the next one
+count correctly. A push touching only docs, tests, CI or the Makefile ships
+nothing and releases nothing.
+
+The upload is not automatic to the end: it runs through `publish.yml` — the
+same path a manual release takes — which gates on the `pypi` GitHub
+environment, so a reviewer approves before anything reaches the index. To cut
+a release by hand, or to publish a pre-release or to TestPyPI, run that
+workflow directly.
+
 ## License
 
 Apache-2.0.

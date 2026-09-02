@@ -21,6 +21,18 @@ on:
         default: testpypi
         type: choice
         options: [testpypi, pypi]
+  # Also callable, so the release-on-merge workflow can reuse this exact path
+  # rather than growing a second one. Dispatching it from another workflow is
+  # not an option: an event raised with GITHUB_TOKEN deliberately starts no new
+  # run, so the release would silently never happen.
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      target:
+        required: true
+        type: string
 
 # One release per index at a time; never cancel a publish in flight.
 concurrency:
@@ -121,3 +133,28 @@ jobs:
         with:
           packages-dir: dist
           repository-url: ${{ inputs.target == 'pypi' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
+
+  # The version is stamped into the build and never committed, so without a tag
+  # nothing in the repo records what shipped. The release train reads these tags
+  # to decide the next version, so this job is load-bearing, not bookkeeping.
+  tag:
+    name: Tag the release
+    needs: publish
+    if: inputs.target == 'pypi'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag v${{ inputs.version }}
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "::notice::v$VERSION is already tagged; leaving it alone"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              tag -a "v$VERSION" -m "langchain-infino v$VERSION"
+          git push origin "refs/tags/v$VERSION"

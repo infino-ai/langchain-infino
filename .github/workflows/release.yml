@@ -1,0 +1,147 @@
+name: Release on merge
+
+# Releases `langchain-infino` when something shipping lands on main. The size
+# of the bump follows the engine, because tracking `infino` is what this
+# package is for: a new engine major is a major here, a new engine minor a
+# minor, and anything else a patch.
+#
+# The upload itself is not duplicated here — this calls `publish.yml`, the same
+# path a manual release takes, so there is one place that builds, smoke-tests
+# and uploads. That workflow gates on the `pypi` environment, which is where a
+# reviewer approves before anything reaches the index.
+#
+# Note for whoever wires this up: PyPI Trusted Publishing matches the
+# entry-point workflow, so `release.yml` needs its own publisher entry on PyPI
+# (same repo, same `pypi` environment) alongside the existing `publish.yml`
+# one. Until that exists the upload step will fail to authenticate.
+
+on:
+  push:
+    branches: [main]
+    # A release has to carry something a user installs. The wheel holds only
+    # `langchain_infino/`, and the metadata comes from `pyproject.toml`, so a
+    # push touching just docs, CI, tests or the Makefile ships nothing and
+    # should not burn a version.
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - ".github/**"
+      - "tests/**"
+      - "Makefile"
+      - ".gitignore"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Compute the version and stop, without releasing"
+        default: true
+        type: boolean
+
+# Two merges in quick succession must not race for the same version: the second
+# waits rather than computing a number the first has already taken.
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  decide:
+    name: Decide the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      bump: ${{ steps.next.outputs.bump }}
+      reason: ${{ steps.next.outputs.reason }}
+    steps:
+      # Full history and tags: the base version is the highest of the tree and
+      # the release tags, and the bump needs the previous revision to diff.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # `event.before` is all-zeros on a first push or after history is
+      # rewritten, and the commit may be gone; either way, no previous revision
+      # means the bump falls back to a patch.
+      - id: previous
+        name: Recover the previous pyproject
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] \
+             && git cat-file -e "$BEFORE:pyproject.toml" 2>/dev/null; then
+            git show "$BEFORE:pyproject.toml" > /tmp/previous-pyproject.toml
+            echo "path=/tmp/previous-pyproject.toml" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::no previous revision to compare; a patch it is"
+            echo "path=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: next
+        name: Compute the next version
+        run: |
+          python3 .github/scripts/next_version.py \
+            --new-pyproject pyproject.toml \
+            ${{ steps.previous.outputs.path && format('--old-pyproject {0}', steps.previous.outputs.path) || '' }} \
+            --tags "$(git tag --list 'v*' | tr '\n' ' ')"
+
+      # A version already on the index cannot be replaced, so stop here with a
+      # readable error rather than failing inside the upload.
+      - name: Refuse a version PyPI already has
+        env:
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          python3 - "$VERSION" <<'PY'
+          import json, sys, urllib.error, urllib.request
+
+          version = sys.argv[1]
+          try:
+              with urllib.request.urlopen(
+                  "https://pypi.org/pypi/langchain-infino/json", timeout=30
+              ) as response:
+                  released = json.load(response)["releases"]
+          except urllib.error.HTTPError as error:
+              if error.code == 404:
+                  print("package not on PyPI yet; nothing to collide with")
+                  sys.exit(0)
+              raise
+          if version in released:
+              # Annotations are read from stdout, so print before exiting.
+              print(
+                  f"::error::{version} is already on PyPI. The version base is "
+                  f"wrong - check the release tags against pyproject.toml."
+              )
+              sys.exit(1)
+          print(f"{version} is free")
+          PY
+
+      - name: Summarise
+        env:
+          BUMP: ${{ steps.next.outputs.bump }}
+          VERSION: ${{ steps.next.outputs.version }}
+          REASON: ${{ steps.next.outputs.reason }}
+        run: |
+          {
+            echo "### Release $VERSION (\`$BUMP\`)"
+            echo
+            echo "$REASON"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: Release ${{ needs.decide.outputs.version }}
+    needs: decide
+    if: ${{ !inputs.dry_run }}
+    # A called workflow cannot hold more than its caller, so the permissions
+    # its jobs need are granted here: OIDC for the trusted-publisher upload,
+    # and write access to push the release tag.
+    permissions:
+      id-token: write
+      contents: write
+    uses: ./.github/workflows/publish.yml
+    with:
+      version: ${{ needs.decide.outputs.version }}
+      target: pypi
