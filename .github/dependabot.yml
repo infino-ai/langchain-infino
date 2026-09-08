@@ -1,0 +1,35 @@
+# Keep dependencies current, most importantly the infino engine — a new
+# engine release should show up here as a PR that has to pass CI, not as
+# silent drift.
+#
+# Dependabot has no priority setting, and a full queue means it simply opens
+# no more PRs — so the dependency that matters most can be the one left out.
+# The fix is to keep the queue from filling: every dependency except the
+# engine rides in one grouped PR, occupying a single slot however many are
+# pending, while infino matches no group and so always gets its own.
+#
+# Note pip has no `versioning-strategy`: an in-range engine release updates
+# nothing here because the project has no lockfile, and an out-of-range one
+# (a new 0.x minor) opens the PR that starts the compatibility bump.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 5
+    groups:
+      dependencies:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "infino"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
