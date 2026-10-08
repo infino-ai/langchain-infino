@@ -16,6 +16,7 @@ from langchain_infino.vectorstores import InfinoVectorStore
 
 EMBED_DIM = 16
 
+
 # The schema a store reads back to learn its embedding width and which
 # metadata keys were promoted.
 def _stub_schema(dim: int = EMBED_DIM) -> pa.Schema:
@@ -42,9 +43,7 @@ class _RecordingTable:
     def schema(self) -> pa.Schema:
         return _stub_schema()
 
-    def vector_search(
-        self, column: str, query: Any, k: int, **kwargs: Any
-    ) -> pa.Table:
+    def vector_search(self, column: str, query: Any, k: int, **kwargs: Any) -> pa.Table:
         return self._record("vector_search", column=column, k=k, **kwargs)
 
     def bm25_search(self, column: str, query: str, k: int, **kwargs: Any) -> pa.Table:

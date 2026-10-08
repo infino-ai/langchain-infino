@@ -78,7 +78,6 @@ _RELEVANCE_FNS: dict[str, Callable[[float], float]] = {
 }
 
 
-
 # Vector tuning knobs removed with engine-decided serving (infino#546).
 # LangChain's `**kwargs` convention would swallow them silently; fail loud
 # with a migration hint instead.
@@ -93,7 +92,6 @@ def _reject_removed_knobs(kwargs: Mapping[str, Any]) -> None:
                 "rerank budget) is engine-decided, calibrated per table at "
                 "optimize time; drop the argument"
             )
-
 
 
 def _l2_normalize(vectors: list[list[float]]) -> list[list[float]]:
@@ -413,9 +411,7 @@ class InfinoVectorStore(VectorStore):
         elif not ids:
             return False
         else:
-            predicate = (
-                f"{self._id_column} IN ({', '.join(sql_lit(i) for i in ids)})"
-            )
+            predicate = f"{self._id_column} IN ({', '.join(sql_lit(i) for i in ids)})"
         self._table.delete(predicate)
         return True
 
@@ -690,9 +686,7 @@ class InfinoVectorStore(VectorStore):
         """A retriever that fuses BM25 and vector search (RRF) per query."""
         from langchain_infino.retrievers import InfinoHybridRetriever
 
-        return InfinoHybridRetriever(
-            vectorstore=self, k=k
-        )
+        return InfinoHybridRetriever(vectorstore=self, k=k)
 
     def as_bm25_retriever(
         self,
@@ -967,9 +961,7 @@ def _metadata_fields_from_schema(
     return [field for field in schema if field.name not in reserved]
 
 
-def _reserved_columns(
-    text_column: str, vector_column: str, id_column: str
-) -> set[str]:
+def _reserved_columns(text_column: str, vector_column: str, id_column: str) -> set[str]:
     """Column names a promoted metadata key may not take.
 
     ``score`` is the relevance column the search functions append and ``_id``

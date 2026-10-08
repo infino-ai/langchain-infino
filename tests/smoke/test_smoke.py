@@ -50,9 +50,7 @@ def test_public_api_smoke(tmp_path) -> None:
     assert isinstance(bm25, InfinoBM25Retriever)
     assert bm25.invoke("search")
 
-    assert store.search_by_sql(
-        "SELECT doc_id, page_content, _metadata_json FROM smoke"
-    )
+    assert store.search_by_sql("SELECT doc_id, page_content, _metadata_json FROM smoke")
 
     cache = InfinoSemanticCache(
         connection, embedding, dim=DIM, table_name="smoke_cache"
