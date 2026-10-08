@@ -72,7 +72,7 @@ def test_rows_to_documents_folds_declared_columns_and_skips_engine_id() -> None:
             SCORE_COLUMN: [0.5],
         }
     )
-    (doc, score), = rows_to_documents(
+    ((doc, score),) = rows_to_documents(
         table, id_column="doc_id", text_column="page_content"
     )
     assert doc.id == "a"
@@ -85,7 +85,7 @@ def test_rows_to_documents_score_none_when_not_projected() -> None:
     table = pa.table(
         {"doc_id": ["a"], "page_content": ["hi"], METADATA_JSON_COLUMN: ["{}"]}
     )
-    (doc, score), = rows_to_documents(
+    ((doc, score),) = rows_to_documents(
         table, id_column="doc_id", text_column="page_content"
     )
     assert score is None

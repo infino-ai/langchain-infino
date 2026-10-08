@@ -40,6 +40,7 @@ jobs:
         run: pip install "infino==${{ inputs.infino_version }}"
       - run: pip install -e ".[test,lint]"
       - run: ruff check .
+      - run: ruff format --check .
       - run: mypy langchain_infino
       - run: pytest tests/unit -q
 

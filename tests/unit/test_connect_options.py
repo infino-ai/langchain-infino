@@ -18,6 +18,7 @@ from langchain_infino import InfinoVectorStore
 
 EMBED_DIM = 16
 
+
 # The schema a store reads back to learn its embedding width and which
 # metadata keys were promoted.
 def _stub_schema(dim: int = EMBED_DIM) -> pa.Schema:
@@ -83,9 +84,7 @@ def empty_connection() -> _StubConnection:
 
 def _connect(connection: _StubConnection, **kwargs: Any) -> dict[str, Any]:
     """Call ``connect`` with a stubbed engine, returning the forwarded kwargs."""
-    with patch.object(
-        vectorstores.infino, "connect", return_value=connection
-    ) as spy:
+    with patch.object(vectorstores.infino, "connect", return_value=connection) as spy:
         InfinoVectorStore.connect(
             "s3://bucket/prefix",
             DeterministicFakeEmbedding(size=EMBED_DIM),

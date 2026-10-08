@@ -16,6 +16,7 @@ from langchain_infino.vectorstores import InfinoVectorStore
 
 EMBED_DIM = 16
 
+
 # The schema a store reads back to learn its embedding width and which
 # metadata keys were promoted.
 def _stub_schema(dim: int = EMBED_DIM) -> pa.Schema:
@@ -42,9 +43,7 @@ class _RecordingTable:
     def schema(self) -> pa.Schema:
         return _stub_schema()
 
-    def vector_search(
-        self, column: str, query: Any, k: int, **kwargs: Any
-    ) -> pa.Table:
+    def vector_search(self, column: str, query: Any, k: int, **kwargs: Any) -> pa.Table:
         return self._record("vector_search", column=column, k=k, **kwargs)
 
     def bm25_search(self, column: str, query: str, k: int, **kwargs: Any) -> pa.Table:
@@ -98,12 +97,12 @@ def test_hybrid_search_forwards_k(store: InfinoVectorStore) -> None:
     assert call["k"] == 6
 
 
-def test_bm25_stats_and_mode_reach_the_engine(store: InfinoVectorStore) -> None:
-    store.as_bm25_retriever(k=4, mode="and", stats="global").invoke("q")
+def test_bm25_mode_reaches_the_engine(store: InfinoVectorStore) -> None:
+    store.as_bm25_retriever(k=4, mode="and").invoke("q")
     call = _calls(store)["bm25_search"]
     assert call["k"] == 4
     assert call["mode"] == "and"
-    assert call["stats"] == "global"
+    assert "stats" not in call
 
 
 def test_options_default_to_none_so_the_engine_picks(store: InfinoVectorStore) -> None:
@@ -113,4 +112,4 @@ def test_options_default_to_none_so_the_engine_picks(store: InfinoVectorStore) -
     store.as_bm25_retriever(k=4).invoke("q")
     vector, bm25 = _calls(store)["vector_search"], _calls(store)["bm25_search"]
     assert "nprobe" not in vector and "rerank_mult" not in vector
-    assert bm25["mode"] is None and bm25["stats"] is None
+    assert bm25["mode"] is None and "stats" not in bm25

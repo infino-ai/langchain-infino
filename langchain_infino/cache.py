@@ -86,9 +86,7 @@ class InfinoSemanticCache(BaseCache):
                 return cast(RETURN_VAL_TYPE, cached)
         return None
 
-    def update(
-        self, prompt: str, llm_string: str, return_val: RETURN_VAL_TYPE
-    ) -> None:
+    def update(self, prompt: str, llm_string: str, return_val: RETURN_VAL_TYPE) -> None:
         self._store.add_texts(
             [prompt],
             metadatas=[

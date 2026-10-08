@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "langchain-infino"
-version = "0.3.0"
+version = "0.4.0"
 description = "LangChain integration for Infino — vector, BM25, and hybrid retrieval over one engine on object storage."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -33,7 +33,7 @@ classifiers = [
 ]
 dependencies = [
     "langchain-core>=0.3",
-    "infino>=0.5.7,<0.7",
+    "infino>=0.10,<0.12",
     "pyarrow>=14",
     "numpy>=1.26",
 ]
@@ -48,7 +48,7 @@ Changelog = "https://github.com/infino-ai/langchain-infino/releases"
 # langchain-tests carries the standard VectorStore compliance suites; the
 # suite's async cases need an asyncio plugin to run.
 test = ["pytest", "pytest-asyncio", "langchain-tests"]
-lint = ["ruff", "mypy"]
+lint = ["ruff==0.16.10", "mypy"]
 
 [tool.pytest.ini_options]
 # The compliance suite ships async test cases; run them without per-test marks.

@@ -93,9 +93,7 @@ def test_open_existing_table_by_constructor(tmp_path) -> None:
         TEXTS, embedding, connection=connection, table_name="docs", dim=EMBED_DIM
     )
     # A second handle opens the already-populated table by name.
-    reopened = InfinoVectorStore(
-        connection, "docs", embedding, dim=EMBED_DIM
-    )
+    reopened = InfinoVectorStore(connection, "docs", embedding, dim=EMBED_DIM)
     assert len(reopened.similarity_search(TEXTS[0], k=3)) == 3
 
 

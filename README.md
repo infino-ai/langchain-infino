@@ -96,20 +96,30 @@ need no `storage_options` at all.
 
 ```python
 # Amazon S3 (or S3-compatible: set aws_endpoint, aws_allow_http for MinIO/R2).
-connection = infino.connect("s3://bucket/prefix", storage_options={
-    "aws_access_key_id": "...",
-    "aws_secret_access_key": "...",
-    "aws_region": "us-east-1",
-})
+connection = infino.connect(
+    "s3://bucket/prefix",
+    storage_options={
+        "aws_access_key_id": "...",
+        "aws_secret_access_key": "...",
+        "aws_region": "us-east-1",
+    },
+)
 
 # Azure Blob Storage.
-connection = infino.connect("az://container/prefix", storage_options={
-    "azure_storage_account_name": "...",
-    "azure_storage_account_key": "...",
-})
+connection = infino.connect(
+    "az://container/prefix",
+    storage_options={
+        "azure_storage_account_name": "...",
+        "azure_storage_account_key": "...",
+    },
+)
 
 store = InfinoVectorStore.from_texts(
-    texts, embedding, connection=connection, table_name="docs", dim=1536,
+    texts,
+    embedding,
+    connection=connection,
+    table_name="docs",
+    dim=1536,
 )
 ```
 
@@ -119,7 +129,10 @@ reaches a local directory, object storage, or a hosted target the same way:
 
 ```python
 store = InfinoVectorStore.connect(
-    "s3://bucket/prefix", embedding, "docs", dim=1536,
+    "s3://bucket/prefix",
+    embedding,
+    "docs",
+    dim=1536,
     storage_options={"aws_region": "us-east-1"},
 )
 ```
@@ -156,8 +169,13 @@ Or in one call:
 
 ```python
 store = InfinoVectorStore.connect(
-    "https://...", embedding, "docs", dim=1536,
-    api_key="...", create_database=True, create=True,
+    "https://...",
+    embedding,
+    "docs",
+    dim=1536,
+    api_key="...",
+    create_database=True,
+    create=True,
 )
 ```
 
@@ -191,9 +209,9 @@ nothing — deleting ids that aren't there has still succeeded.
 
 ```python
 store.similarity_search("vector databases", k=4)
-store.similarity_search_with_score("vector databases", k=4)       # raw distance
+store.similarity_search_with_score("vector databases", k=4)  # raw distance
 store.similarity_search_with_relevance_scores("vector databases", k=4)  # [0, 1]
-store.similarity_search_by_vector(query_vector, k=4)              # query_vector: list[float]
+store.similarity_search_by_vector(query_vector, k=4)  # query_vector: list[float]
 ```
 
 ## Metadata filtering
@@ -205,15 +223,18 @@ equality, `$eq` / `$ne` / `$gt` / `$gte` / `$lt` / `$lte`, `$in` / `$nin`, and
 
 ```python
 store = InfinoVectorStore.from_texts(
-    texts, embedding,
-    connection=connection, table_name="papers",
+    texts,
+    embedding,
+    connection=connection,
+    table_name="papers",
     metadatas=[{"category": "ml", "year": 2024} for _ in texts],
 )
 
 store.similarity_search("optimizers", k=4, filter={"category": "ml"})
 store.similarity_search("optimizers", k=4, filter={"year": {"$gte": 2023}})
-store.similarity_search("optimizers", k=4,
-                        filter={"$or": [{"category": "ml"}, {"year": {"$lt": 2000}}]})
+store.similarity_search(
+    "optimizers", k=4, filter={"$or": [{"category": "ml"}, {"year": {"$lt": 2000}}]}
+)
 ```
 
 A key is promoted only if every value it carries is a scalar of one consistent
@@ -230,8 +251,10 @@ filter on, or if you want a specific type or non-null constraint:
 import pyarrow as pa
 
 store = InfinoVectorStore.from_texts(
-    texts, embedding,
-    connection=connection, table_name="papers",
+    texts,
+    embedding,
+    connection=connection,
+    table_name="papers",
     metadata_columns=[
         pa.field("category", pa.large_utf8(), nullable=False),
         pa.field("year", pa.int64(), nullable=True),
@@ -290,23 +313,16 @@ retriever.invoke("neural network training")
 Pure lexical ranking over the FTS-indexed text column.
 
 ```python
-retriever = store.as_bm25_retriever(k=4)              # OR by default
+retriever = store.as_bm25_retriever(k=4)  # OR by default
 retriever = store.as_bm25_retriever(k=4, mode="and")  # require all terms
 retriever.invoke("gradient descent")
-retriever.invoke("gradient descent", k=10)            # override per call
+retriever.invoke("gradient descent", k=10)  # override per call
 ```
 
-A growing table splits across many storage files, and by default each file
-ranks against its own term statistics — so the same document can score
-differently depending on which file it landed in. `stats="global"` ranks
-against corpus-wide statistics instead, and a large table then behaves exactly
-like one unified index. It costs one extra document-frequency pass over the
-files holding your query's terms, so reach for it when ranking quality matters
-more than the last few milliseconds.
-
-```python
-retriever = store.as_bm25_retriever(k=4, stats="global")
-```
+A growing table splits across many storage files. A term search ranks against
+statistics gathered across all of them, so a large table behaves like one
+index. Prefix search, and a table opened with a lazily loaded manifest, rank
+each file against its own statistics.
 
 ## Term matching and counting
 
@@ -315,8 +331,8 @@ than the best few — a filter, an export, an audit — `token_search` matches
 terms without ranking, so it takes no `k`:
 
 ```python
-store.token_search("gradient descent")               # any term
-store.token_search("gradient descent", mode="and")   # both terms
+store.token_search("gradient descent")  # any term
+store.token_search("gradient descent", mode="and")  # both terms
 ```
 
 `exact_search` looks a value up verbatim, with no tokenization at all. It
@@ -336,22 +352,13 @@ store.count("gradient descent", mode="and")
 
 ## Language and tokenization
 
-Out of the box the text index folds to lowercase ASCII — right for English,
-but it strips accents and drops non-Latin scripts. If your corpus isn't
-English, index it with the `standard` analyzer (UAX #29 word segmentation and
-full Unicode lowercasing) so terms like `café` stay searchable.
+The text index uses the `standard` analyzer: UAX #29 word segmentation and
+full Unicode lowercasing, so accented and non-Latin terms like `café` stay
+searchable. It is the only analyzer. `analyzer="standard"` is accepted, and any
+other name raises at table creation.
 
-```python
-store = InfinoVectorStore.from_texts(
-    texts, embedding,
-    connection=connection, table_name="docs", dim=1536,
-    analyzer="standard",
-)
-```
-
-Pick it at table creation — changing the analyzer later means recreating the
-table. The id column always keeps the default so `get_by_ids` matches ids
-verbatim.
+A table created with the removed `ascii_lower` analyzer does not open on
+infino 0.11 or later. Copy its rows out with infino 0.10, then re-create it.
 
 ## Recall and maintenance
 
@@ -458,7 +465,7 @@ The async methods (`aadd_texts`, `asimilarity_search`, …) are inherited from
   - `optimize(*, max_memory_mb=None, min_fill_percent=None, target_superfile_size_mb=None, stale_seal_timeout_ms=None) -> None`
   - `gc(grace_secs) -> GcReport`, `schema() -> pyarrow.Schema`, `drop(*, purge=True)`
   - `search_by_sql(sql) -> list[Document]`
-  - `as_retriever(...)`, `as_hybrid_retriever(k=4)`, `as_bm25_retriever(k=4, mode=None, *, stats=None)`
+  - `as_retriever(...)`, `as_hybrid_retriever(k=4)`, `as_bm25_retriever(k=4, mode=None)`
   - `connection`, `table`, `table_name`, `metric`, `dim`, `metadata_columns` — accessors, including for engine calls the store doesn't wrap.
 - `InfinoHybridRetriever`, `InfinoBM25Retriever` — `BaseRetriever`s wrapping a store.
 - `InfinoTranslator` — `StructuredQuery` → SQL filter, for `SelfQueryRetriever`.
@@ -471,8 +478,8 @@ The async methods (`aadd_texts`, `asimilarity_search`, …) are inherited from
 `metric` is `"cosine"` (default), `"l2sq"` / `"l2"`, or `"negdot"` / `"dot"`;
 `dim` and `metadata_columns` are inferred when omitted — from the embedding
 and `metadatas` when creating a table, from the table's own schema when
-opening one. `analyzer` is `"ascii_lower"` (default) or `"standard"`; `stats` is
-`"per_superfile"` (default) or `"global"`; `cold_fetch_mode` is
+opening one. `analyzer` is `"standard"`, the default and only one;
+`cold_fetch_mode` is
 `"hybrid_with_prefetch"`, `"range_only"`, or
 `"lazy_foreground_with_background_fill"`.
 See [Infino](https://github.com/infino-ai/infino) for engine internals.

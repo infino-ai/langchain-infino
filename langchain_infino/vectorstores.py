@@ -36,7 +36,6 @@ if TYPE_CHECKING:
 # Mirror the engine's accepted values so the types flow through unchanged.
 Metric = Literal["cosine", "l2sq", "l2", "negdot", "dot"]
 SearchMode = Literal["or", "and"]
-Bm25Stats = Literal["per_superfile", "global"]
 ColdFetchMode = Literal[
     "hybrid_with_prefetch",
     "range_only",
@@ -79,7 +78,6 @@ _RELEVANCE_FNS: dict[str, Callable[[float], float]] = {
 }
 
 
-
 # Vector tuning knobs removed with engine-decided serving (infino#546).
 # LangChain's `**kwargs` convention would swallow them silently; fail loud
 # with a migration hint instead.
@@ -94,7 +92,6 @@ def _reject_removed_knobs(kwargs: Mapping[str, Any]) -> None:
                 "rerank budget) is engine-decided, calibrated per table at "
                 "optimize time; drop the argument"
             )
-
 
 
 def _l2_normalize(vectors: list[list[float]]) -> list[list[float]]:
@@ -414,9 +411,7 @@ class InfinoVectorStore(VectorStore):
         elif not ids:
             return False
         else:
-            predicate = (
-                f"{self._id_column} IN ({', '.join(sql_lit(i) for i in ids)})"
-            )
+            predicate = f"{self._id_column} IN ({', '.join(sql_lit(i) for i in ids)})"
         self._table.delete(predicate)
         return True
 
@@ -569,8 +564,6 @@ class InfinoVectorStore(VectorStore):
         query: str,
         k: int = DEFAULT_K,
         mode: SearchMode | None = None,
-        *,
-        stats: Bm25Stats | None = None,
     ) -> list[Document]:
         """Lexical BM25 retrieval over the FTS-indexed text column."""
         result = self._table.bm25_search(
@@ -578,7 +571,6 @@ class InfinoVectorStore(VectorStore):
             query,
             k,
             mode=mode,
-            stats=stats,
             projection=self._projection(),
         )
         return self._to_documents(result)
@@ -694,21 +686,17 @@ class InfinoVectorStore(VectorStore):
         """A retriever that fuses BM25 and vector search (RRF) per query."""
         from langchain_infino.retrievers import InfinoHybridRetriever
 
-        return InfinoHybridRetriever(
-            vectorstore=self, k=k
-        )
+        return InfinoHybridRetriever(vectorstore=self, k=k)
 
     def as_bm25_retriever(
         self,
         k: int = DEFAULT_K,
         mode: SearchMode | None = None,
-        *,
-        stats: Bm25Stats | None = None,
     ) -> InfinoBM25Retriever:
         """A lexical BM25 retriever over the text column."""
         from langchain_infino.retrievers import InfinoBM25Retriever
 
-        return InfinoBM25Retriever(vectorstore=self, k=k, mode=mode, stats=stats)
+        return InfinoBM25Retriever(vectorstore=self, k=k, mode=mode)
 
     @classmethod
     def open_or_create(
@@ -973,9 +961,7 @@ def _metadata_fields_from_schema(
     return [field for field in schema if field.name not in reserved]
 
 
-def _reserved_columns(
-    text_column: str, vector_column: str, id_column: str
-) -> set[str]:
+def _reserved_columns(text_column: str, vector_column: str, id_column: str) -> set[str]:
     """Column names a promoted metadata key may not take.
 
     ``score`` is the relevance column the search functions append and ``_id``
@@ -1071,7 +1057,7 @@ def _create_table(
         table_name,
         _build_schema(dim, text_column, vector_column, id_column, metadata_columns),
         infino.IndexSpec()
-        .fts(text_column, analyzer)
+        .fts(text_column, analyzer=analyzer)
         .fts(id_column)
         .vector(vector_column, dim, metric),
     )

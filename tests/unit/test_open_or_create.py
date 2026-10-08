@@ -16,6 +16,7 @@ from langchain_infino import InfinoVectorStore
 
 EMBED_DIM = 16
 
+
 # The schema a store reads back to learn its embedding width and which
 # metadata keys were promoted.
 def _stub_schema(dim: int = EMBED_DIM) -> pa.Schema:
