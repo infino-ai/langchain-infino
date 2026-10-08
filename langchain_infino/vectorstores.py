@@ -1065,7 +1065,7 @@ def _create_table(
         table_name,
         _build_schema(dim, text_column, vector_column, id_column, metadata_columns),
         infino.IndexSpec()
-        .fts(text_column, analyzer)
+        .fts(text_column, analyzer=analyzer)
         .fts(id_column)
         .vector(vector_column, dim, metric),
     )

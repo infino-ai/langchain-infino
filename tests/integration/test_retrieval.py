@@ -1,5 +1,7 @@
 """Integration tests for filtering, hybrid/BM25 retrieval, MMR, and SQL."""
 
+from typing import Optional
+
 import infino
 import pyarrow as pa
 import pytest
@@ -183,10 +185,11 @@ def test_tuning_kwargs_are_rejected(store: InfinoVectorStore) -> None:
         store.similarity_search("learning", k=3, nprobe=8)
 
 
-# --- FTS analyzer selection ---
+# --- Text analysis ---
 
 
-def test_standard_analyzer_indexes_non_ascii_terms(tmp_path) -> None:
+@pytest.mark.parametrize("analyzer", [None, "standard"])
+def test_text_index_keeps_non_ascii_terms(tmp_path, analyzer: Optional[str]) -> None:
     connection = infino.connect(str(tmp_path / "unicode-db"))
     store = InfinoVectorStore.from_texts(
         ["un café à Paris", "plain ascii text"],
@@ -194,7 +197,7 @@ def test_standard_analyzer_indexes_non_ascii_terms(tmp_path) -> None:
         connection=connection,
         table_name="docs",
         dim=EMBED_DIM,
-        analyzer="standard",
+        analyzer=analyzer,
     )
     docs = store.as_bm25_retriever(k=2).invoke("café")
     assert [d.page_content for d in docs] == ["un café à Paris"]

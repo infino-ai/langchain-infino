@@ -329,22 +329,13 @@ store.count("gradient descent", mode="and")
 
 ## Language and tokenization
 
-Out of the box the text index folds to lowercase ASCII — right for English,
-but it strips accents and drops non-Latin scripts. If your corpus isn't
-English, index it with the `standard` analyzer (UAX #29 word segmentation and
-full Unicode lowercasing) so terms like `café` stay searchable.
+The text index uses the `standard` analyzer: UAX #29 word segmentation and
+full Unicode lowercasing, so accented and non-Latin terms like `café` stay
+searchable. It is the only analyzer. `analyzer="standard"` is accepted, and any
+other name raises at table creation.
 
-```python
-store = InfinoVectorStore.from_texts(
-    texts, embedding,
-    connection=connection, table_name="docs", dim=1536,
-    analyzer="standard",
-)
-```
-
-Pick it at table creation — changing the analyzer later means recreating the
-table. The id column always keeps the default so `get_by_ids` matches ids
-verbatim.
+A table created with the removed `ascii_lower` analyzer does not open on
+infino 0.11 or later. Copy its rows out with infino 0.10, then re-create it.
 
 ## Recall and maintenance
 
