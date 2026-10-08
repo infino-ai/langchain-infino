@@ -96,20 +96,30 @@ need no `storage_options` at all.
 
 ```python
 # Amazon S3 (or S3-compatible: set aws_endpoint, aws_allow_http for MinIO/R2).
-connection = infino.connect("s3://bucket/prefix", storage_options={
-    "aws_access_key_id": "...",
-    "aws_secret_access_key": "...",
-    "aws_region": "us-east-1",
-})
+connection = infino.connect(
+    "s3://bucket/prefix",
+    storage_options={
+        "aws_access_key_id": "...",
+        "aws_secret_access_key": "...",
+        "aws_region": "us-east-1",
+    },
+)
 
 # Azure Blob Storage.
-connection = infino.connect("az://container/prefix", storage_options={
-    "azure_storage_account_name": "...",
-    "azure_storage_account_key": "...",
-})
+connection = infino.connect(
+    "az://container/prefix",
+    storage_options={
+        "azure_storage_account_name": "...",
+        "azure_storage_account_key": "...",
+    },
+)
 
 store = InfinoVectorStore.from_texts(
-    texts, embedding, connection=connection, table_name="docs", dim=1536,
+    texts,
+    embedding,
+    connection=connection,
+    table_name="docs",
+    dim=1536,
 )
 ```
 
@@ -119,7 +129,10 @@ reaches a local directory, object storage, or a hosted target the same way:
 
 ```python
 store = InfinoVectorStore.connect(
-    "s3://bucket/prefix", embedding, "docs", dim=1536,
+    "s3://bucket/prefix",
+    embedding,
+    "docs",
+    dim=1536,
     storage_options={"aws_region": "us-east-1"},
 )
 ```
@@ -156,8 +169,13 @@ Or in one call:
 
 ```python
 store = InfinoVectorStore.connect(
-    "https://...", embedding, "docs", dim=1536,
-    api_key="...", create_database=True, create=True,
+    "https://...",
+    embedding,
+    "docs",
+    dim=1536,
+    api_key="...",
+    create_database=True,
+    create=True,
 )
 ```
 
@@ -191,9 +209,9 @@ nothing — deleting ids that aren't there has still succeeded.
 
 ```python
 store.similarity_search("vector databases", k=4)
-store.similarity_search_with_score("vector databases", k=4)       # raw distance
+store.similarity_search_with_score("vector databases", k=4)  # raw distance
 store.similarity_search_with_relevance_scores("vector databases", k=4)  # [0, 1]
-store.similarity_search_by_vector(query_vector, k=4)              # query_vector: list[float]
+store.similarity_search_by_vector(query_vector, k=4)  # query_vector: list[float]
 ```
 
 ## Metadata filtering
@@ -205,15 +223,18 @@ equality, `$eq` / `$ne` / `$gt` / `$gte` / `$lt` / `$lte`, `$in` / `$nin`, and
 
 ```python
 store = InfinoVectorStore.from_texts(
-    texts, embedding,
-    connection=connection, table_name="papers",
+    texts,
+    embedding,
+    connection=connection,
+    table_name="papers",
     metadatas=[{"category": "ml", "year": 2024} for _ in texts],
 )
 
 store.similarity_search("optimizers", k=4, filter={"category": "ml"})
 store.similarity_search("optimizers", k=4, filter={"year": {"$gte": 2023}})
-store.similarity_search("optimizers", k=4,
-                        filter={"$or": [{"category": "ml"}, {"year": {"$lt": 2000}}]})
+store.similarity_search(
+    "optimizers", k=4, filter={"$or": [{"category": "ml"}, {"year": {"$lt": 2000}}]}
+)
 ```
 
 A key is promoted only if every value it carries is a scalar of one consistent
@@ -230,8 +251,10 @@ filter on, or if you want a specific type or non-null constraint:
 import pyarrow as pa
 
 store = InfinoVectorStore.from_texts(
-    texts, embedding,
-    connection=connection, table_name="papers",
+    texts,
+    embedding,
+    connection=connection,
+    table_name="papers",
     metadata_columns=[
         pa.field("category", pa.large_utf8(), nullable=False),
         pa.field("year", pa.int64(), nullable=True),
@@ -290,10 +313,10 @@ retriever.invoke("neural network training")
 Pure lexical ranking over the FTS-indexed text column.
 
 ```python
-retriever = store.as_bm25_retriever(k=4)              # OR by default
+retriever = store.as_bm25_retriever(k=4)  # OR by default
 retriever = store.as_bm25_retriever(k=4, mode="and")  # require all terms
 retriever.invoke("gradient descent")
-retriever.invoke("gradient descent", k=10)            # override per call
+retriever.invoke("gradient descent", k=10)  # override per call
 ```
 
 A growing table splits across many storage files. A term search ranks against
@@ -308,8 +331,8 @@ than the best few — a filter, an export, an audit — `token_search` matches
 terms without ranking, so it takes no `k`:
 
 ```python
-store.token_search("gradient descent")               # any term
-store.token_search("gradient descent", mode="and")   # both terms
+store.token_search("gradient descent")  # any term
+store.token_search("gradient descent", mode="and")  # both terms
 ```
 
 `exact_search` looks a value up verbatim, with no tokenization at all. It
