@@ -296,17 +296,10 @@ retriever.invoke("gradient descent")
 retriever.invoke("gradient descent", k=10)            # override per call
 ```
 
-A growing table splits across many storage files, and by default each file
-ranks against its own term statistics — so the same document can score
-differently depending on which file it landed in. `stats="global"` ranks
-against corpus-wide statistics instead, and a large table then behaves exactly
-like one unified index. It costs one extra document-frequency pass over the
-files holding your query's terms, so reach for it when ranking quality matters
-more than the last few milliseconds.
-
-```python
-retriever = store.as_bm25_retriever(k=4, stats="global")
-```
+A growing table splits across many storage files. A term search ranks against
+statistics gathered across all of them, so a large table behaves like one
+index. Prefix search, and a table opened with a lazily loaded manifest, rank
+each file against its own statistics.
 
 ## Term matching and counting
 
@@ -458,7 +451,7 @@ The async methods (`aadd_texts`, `asimilarity_search`, …) are inherited from
   - `optimize(*, max_memory_mb=None, min_fill_percent=None, target_superfile_size_mb=None, stale_seal_timeout_ms=None) -> None`
   - `gc(grace_secs) -> GcReport`, `schema() -> pyarrow.Schema`, `drop(*, purge=True)`
   - `search_by_sql(sql) -> list[Document]`
-  - `as_retriever(...)`, `as_hybrid_retriever(k=4)`, `as_bm25_retriever(k=4, mode=None, *, stats=None)`
+  - `as_retriever(...)`, `as_hybrid_retriever(k=4)`, `as_bm25_retriever(k=4, mode=None)`
   - `connection`, `table`, `table_name`, `metric`, `dim`, `metadata_columns` — accessors, including for engine calls the store doesn't wrap.
 - `InfinoHybridRetriever`, `InfinoBM25Retriever` — `BaseRetriever`s wrapping a store.
 - `InfinoTranslator` — `StructuredQuery` → SQL filter, for `SelfQueryRetriever`.
@@ -471,8 +464,8 @@ The async methods (`aadd_texts`, `asimilarity_search`, …) are inherited from
 `metric` is `"cosine"` (default), `"l2sq"` / `"l2"`, or `"negdot"` / `"dot"`;
 `dim` and `metadata_columns` are inferred when omitted — from the embedding
 and `metadatas` when creating a table, from the table's own schema when
-opening one. `analyzer` is `"ascii_lower"` (default) or `"standard"`; `stats` is
-`"per_superfile"` (default) or `"global"`; `cold_fetch_mode` is
+opening one. `analyzer` is `"standard"`, the default and only one;
+`cold_fetch_mode` is
 `"hybrid_with_prefetch"`, `"range_only"`, or
 `"lazy_foreground_with_background_fill"`.
 See [Infino](https://github.com/infino-ai/infino) for engine internals.

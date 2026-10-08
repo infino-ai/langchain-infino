@@ -36,7 +36,6 @@ if TYPE_CHECKING:
 # Mirror the engine's accepted values so the types flow through unchanged.
 Metric = Literal["cosine", "l2sq", "l2", "negdot", "dot"]
 SearchMode = Literal["or", "and"]
-Bm25Stats = Literal["per_superfile", "global"]
 ColdFetchMode = Literal[
     "hybrid_with_prefetch",
     "range_only",
@@ -569,8 +568,6 @@ class InfinoVectorStore(VectorStore):
         query: str,
         k: int = DEFAULT_K,
         mode: SearchMode | None = None,
-        *,
-        stats: Bm25Stats | None = None,
     ) -> list[Document]:
         """Lexical BM25 retrieval over the FTS-indexed text column."""
         result = self._table.bm25_search(
@@ -578,7 +575,6 @@ class InfinoVectorStore(VectorStore):
             query,
             k,
             mode=mode,
-            stats=stats,
             projection=self._projection(),
         )
         return self._to_documents(result)
@@ -702,13 +698,11 @@ class InfinoVectorStore(VectorStore):
         self,
         k: int = DEFAULT_K,
         mode: SearchMode | None = None,
-        *,
-        stats: Bm25Stats | None = None,
     ) -> InfinoBM25Retriever:
         """A lexical BM25 retriever over the text column."""
         from langchain_infino.retrievers import InfinoBM25Retriever
 
-        return InfinoBM25Retriever(vectorstore=self, k=k, mode=mode, stats=stats)
+        return InfinoBM25Retriever(vectorstore=self, k=k, mode=mode)
 
     @classmethod
     def open_or_create(

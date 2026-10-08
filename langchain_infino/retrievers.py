@@ -16,7 +16,6 @@ from pydantic import ConfigDict
 
 from langchain_infino.vectorstores import (
     DEFAULT_K,
-    Bm25Stats,
     InfinoVectorStore,
     SearchMode,
 )
@@ -51,15 +50,12 @@ class InfinoBM25Retriever(BaseRetriever):
     """Lexical BM25 retriever over the FTS-indexed text column.
 
     ``mode`` joins query terms: ``"or"`` (default) matches any, ``"and"``
-    requires all. ``stats="global"`` scores against corpus-wide term
-    statistics instead of per-superfile ones, so ranking stays stable as
-    the table grows.
+    requires all.
     """
 
     vectorstore: InfinoVectorStore
     k: int = DEFAULT_K
     mode: Optional[SearchMode] = None
-    stats: Optional[Bm25Stats] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -70,11 +66,10 @@ class InfinoBM25Retriever(BaseRetriever):
         run_manager: CallbackManagerForRetrieverRun,
         **kwargs: Any,
     ) -> list[Document]:
-        # `invoke` forwards its keywords here, so a per-call `k`, `mode` or
-        # `stats` overrides the configured one.
+        # `invoke` forwards its keywords here, so a per-call `k` or `mode`
+        # overrides the configured one.
         return self.vectorstore._bm25_search(
             query,
             kwargs.get("k", self.k),
             kwargs.get("mode", self.mode),
-            stats=kwargs.get("stats", self.stats),
         )

@@ -151,13 +151,12 @@ def test_bm25_and_mode_requires_all_terms(store: InfinoVectorStore) -> None:
     assert all("deep" in d.page_content and "learning" in d.page_content for d in docs)
 
 
-def test_bm25_global_stats_over_a_fragmented_table(tmp_path) -> None:
-    """Corpus-wide term statistics rank a table split across many files.
+def test_bm25_over_a_fragmented_table(tmp_path) -> None:
+    """BM25 retrieval returns the right documents from a table split across files.
 
-    Each append commits its own storage file, which is the case global stats
-    exist for — the per-file document frequencies diverge from the corpus's.
-    Score-level equivalence with a unified index is the engine's own test;
-    here we pin that the multi-file gather path returns the right documents.
+    Each append commits its own storage file. Score-level equivalence with a
+    unified index is the engine's own test; here we pin that the multi-file
+    path returns the right documents.
     """
     store = InfinoVectorStore.from_texts(
         ["alpha rare term"],
@@ -169,7 +168,7 @@ def test_bm25_global_stats_over_a_fragmented_table(tmp_path) -> None:
     for i in range(4):
         store.add_texts([f"common filler {i}", f"alpha common {i}"])
 
-    docs = store.as_bm25_retriever(k=5, stats="global").invoke("alpha")
+    docs = store.as_bm25_retriever(k=5).invoke("alpha")
     assert docs
     assert all("alpha" in d.page_content for d in docs)
 

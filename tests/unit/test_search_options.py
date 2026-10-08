@@ -98,12 +98,12 @@ def test_hybrid_search_forwards_k(store: InfinoVectorStore) -> None:
     assert call["k"] == 6
 
 
-def test_bm25_stats_and_mode_reach_the_engine(store: InfinoVectorStore) -> None:
-    store.as_bm25_retriever(k=4, mode="and", stats="global").invoke("q")
+def test_bm25_mode_reaches_the_engine(store: InfinoVectorStore) -> None:
+    store.as_bm25_retriever(k=4, mode="and").invoke("q")
     call = _calls(store)["bm25_search"]
     assert call["k"] == 4
     assert call["mode"] == "and"
-    assert call["stats"] == "global"
+    assert "stats" not in call
 
 
 def test_options_default_to_none_so_the_engine_picks(store: InfinoVectorStore) -> None:
@@ -113,4 +113,4 @@ def test_options_default_to_none_so_the_engine_picks(store: InfinoVectorStore) -
     store.as_bm25_retriever(k=4).invoke("q")
     vector, bm25 = _calls(store)["vector_search"], _calls(store)["bm25_search"]
     assert "nprobe" not in vector and "rerank_mult" not in vector
-    assert bm25["mode"] is None and bm25["stats"] is None
+    assert bm25["mode"] is None and "stats" not in bm25
