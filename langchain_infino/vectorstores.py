@@ -8,6 +8,7 @@ filtered, MMR, and hybrid (RRF) retrieval all run over that one table.
 
 from __future__ import annotations
 
+import warnings
 import math
 from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Callable, Literal
@@ -625,10 +626,11 @@ class InfinoVectorStore(VectorStore):
     def optimize(
         self,
         *,
-        max_memory_mb: int | None = None,
+        max_merge_input_mb: int | None = None,
         min_fill_percent: int | None = None,
         target_superfile_size_mb: int | None = None,
         stale_seal_timeout_ms: int | None = None,
+        max_memory_mb: int | None = None,
     ) -> None:
         """Compact the table and recalibrate its vector serving.
 
@@ -638,19 +640,31 @@ class InfinoVectorStore(VectorStore):
         improve once it has run.
 
         The arguments bound the work; omit them for the engine's defaults.
+        ``max_merge_input_mb`` caps the raw input bytes one merge packs; it is
+        not a memory budget. ``max_memory_mb`` is its old name, accepted with a
+        deprecation warning when the new one is not given.
         """
+        if max_memory_mb is not None:
+            warnings.warn(
+                "max_memory_mb is the old name of max_merge_input_mb and will be "
+                "removed; pass max_merge_input_mb",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if max_merge_input_mb is None:
+                max_merge_input_mb = max_memory_mb
         settings = None
         if any(
             v is not None
             for v in (
-                max_memory_mb,
+                max_merge_input_mb,
                 min_fill_percent,
                 target_superfile_size_mb,
                 stale_seal_timeout_ms,
             )
         ):
             settings = infino.OptimizeOptions(
-                max_memory_mb=max_memory_mb,
+                max_merge_input_mb=max_merge_input_mb,
                 min_fill_percent=min_fill_percent,
                 target_superfile_size_mb=target_superfile_size_mb,
                 stale_seal_timeout_ms=stale_seal_timeout_ms,
