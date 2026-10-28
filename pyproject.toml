@@ -33,7 +33,7 @@ classifiers = [
 ]
 dependencies = [
     "langchain-core>=0.3",
-    "infino>=0.10,<0.12",
+    "infino>=0.11.14,<0.12",
     "pyarrow>=14",
     "numpy>=1.26",
 ]
