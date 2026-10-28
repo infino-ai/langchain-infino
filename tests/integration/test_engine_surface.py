@@ -101,7 +101,13 @@ def test_optimize_runs_and_leaves_the_table_searchable(store) -> None:
 
 
 def test_optimize_accepts_engine_tuning_bounds(store) -> None:
-    store.optimize(max_memory_mb=64, min_fill_percent=50)
+    store.optimize(max_merge_input_mb=64, min_fill_percent=50)
+    assert len(store.similarity_search("search", k=2)) == 2
+
+
+def test_optimize_still_takes_the_old_input_cap_name_with_a_warning(store) -> None:
+    with pytest.warns(DeprecationWarning, match="max_merge_input_mb"):
+        store.optimize(max_memory_mb=64)
     assert len(store.similarity_search("search", k=2)) == 2
 
 
