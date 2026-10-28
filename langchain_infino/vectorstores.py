@@ -8,8 +8,8 @@ filtered, MMR, and hybrid (RRF) retrieval all run over that one table.
 
 from __future__ import annotations
 
-import warnings
 import math
+import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Callable, Literal
 from uuid import uuid4
